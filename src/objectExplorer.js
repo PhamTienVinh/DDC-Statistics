@@ -872,24 +872,30 @@ function toggleSelection(uid, el) {
   syncSelectionToViewer();
 }
 
-// ── Select Assembly — select all objects in the SAME ASSEMBLY INSTANCE as the first selected object ──
+// ── Select Assembly — select all objects with the SAME ASSEMBLY_POS as the first selected object ──
 function selectAssembly() {
   if (selectedIds.size === 0) return;
 
   // Find the first selected object
   const firstUid = selectedIds.values().next().value;
   const firstObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
-  if (!firstObj || !firstObj.assemblyInstanceId) {
-    console.log("[ObjectExplorer] Selected object has no assembly instance");
+  if (!firstObj) {
+    console.log("[ObjectExplorer] No matching object found");
     return;
   }
 
-  const targetInstanceId = firstObj.assemblyInstanceId;
-  console.log(`[ObjectExplorer] Selecting assembly instance: ${targetInstanceId} (${firstObj.assembly})`);
+  // Use ASSEMBLY_POS as the primary matching key
+  const targetPos = firstObj.assemblyPos;
+  if (!targetPos) {
+    console.log("[ObjectExplorer] Selected object has no ASSEMBLY_POS");
+    return;
+  }
 
-  // Select only objects in the SAME assembly instance
+  console.log(`[ObjectExplorer] Selecting all objects with ASSEMBLY_POS: ${targetPos}`);
+
+  // Select all objects with the same ASSEMBLY_POS
   for (const obj of allObjects) {
-    if (obj.assemblyInstanceId === targetInstanceId) {
+    if (obj.assemblyPos === targetPos) {
       selectedIds.add(`${obj.modelId}:${obj.id}`);
     }
   }
@@ -1289,6 +1295,31 @@ function updateSummary() {
     `${filteredObjects.length} objects`;
   document.getElementById("selected-objects-count").textContent =
     `${selectedIds.size} đã chọn`;
+
+  // Calculate stats for selected objects
+  const selStatsEl = document.getElementById("selected-stats");
+  if (selStatsEl) {
+    if (selectedIds.size > 0) {
+      let totalVolume = 0, totalWeight = 0, totalArea = 0;
+      for (const obj of allObjects) {
+        const uid = `${obj.modelId}:${obj.id}`;
+        if (selectedIds.has(uid)) {
+          totalVolume += obj.volume || 0;
+          totalWeight += obj.weight || 0;
+          totalArea += obj.area || 0;
+        }
+      }
+      const parts = [];
+      if (totalVolume > 0) parts.push(`V: ${totalVolume.toFixed(4)} m³`);
+      if (totalWeight > 0) parts.push(`W: ${totalWeight.toFixed(1)} kg`);
+      if (totalArea > 0) parts.push(`A: ${totalArea.toFixed(2)} m²`);
+      selStatsEl.textContent = parts.length > 0 ? parts.join(" | ") : "";
+      selStatsEl.style.display = parts.length > 0 ? "inline" : "none";
+    } else {
+      selStatsEl.textContent = "";
+      selStatsEl.style.display = "none";
+    }
+  }
 }
 
 function showLoading(show) {
