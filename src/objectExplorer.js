@@ -699,8 +699,8 @@ function getObjectLabel(obj) {
 
 // ── Handle TC Viewer selection → sync tree checkboxes ──
 // Called when user selects objects via single-click or area-select in TC 3D viewer.
-// Replaces panel selection with viewer selection (like TC data table behavior).
-// Does NOT call syncSelectionToViewer to avoid loop — viewer already has these selected.
+// Resolves viewer IDs against our allObjects list, handles hierarchy (parent→children),
+// auto-expands collapsed groups, and updates statistics in real-time.
 function handleViewerSelectionChanged(data) {
   if (!allObjects || allObjects.length === 0) return;
 
@@ -715,60 +715,167 @@ function handleViewerSelectionChanged(data) {
       modelObjIds = [data];
     }
 
-    // Build set of selected uids from viewer
-    const viewerSelectedUids = new Set();
+    // Collect all viewer-selected IDs per model
+    const viewerIdsByModel = {}; // { modelId: Set<number> }
     if (modelObjIds && Array.isArray(modelObjIds)) {
       for (const mo of modelObjIds) {
         if (!mo) continue;
         const modelId = mo.modelId;
         const ids = mo.objectRuntimeIds || mo.entityIds || mo.ids || [];
+        if (!viewerIdsByModel[modelId]) viewerIdsByModel[modelId] = new Set();
         for (const id of ids) {
-          viewerSelectedUids.add(`${modelId}:${id}`);
+          viewerIdsByModel[modelId].add(id);
         }
       }
     }
 
+    // Count total incoming IDs
+    let totalIncomingIds = 0;
+    for (const s of Object.values(viewerIdsByModel)) totalIncomingIds += s.size;
+
     // If viewer sends empty selection (click empty space / switch tool),
     // keep existing panel selections (persistent memory).
-    if (viewerSelectedUids.size === 0) {
+    if (totalIncomingIds === 0) {
       console.log("[ObjectExplorer] Viewer empty selection — keeping panel state");
       applyHighlightColors();
       return;
     }
 
-    // Replace panel selection with what the viewer has
-    // (matches TC data table behavior: viewer is the source of truth)
-    selectedIds.clear();
-    for (const uid of viewerSelectedUids) {
-      selectedIds.add(uid);
+    // Build fast lookup index: modelId → Set<objectId> for our allObjects
+    const knownIdsByModel = {}; // { modelId: Set<number> }
+    const objByUid = {}; // { uid: objRecord }
+    for (const obj of allObjects) {
+      const mid = obj.modelId;
+      if (!knownIdsByModel[mid]) knownIdsByModel[mid] = new Set();
+      knownIdsByModel[mid].add(obj.id);
+      objByUid[`${mid}:${obj.id}`] = obj;
     }
 
-    // Update tree UI checkboxes
-    const treeItems = document.querySelectorAll(".tree-item");
-    for (const el of treeItems) {
-      const uid = el.dataset.uid;
-      const isSelected = selectedIds.has(uid);
-      el.classList.toggle("selected", isSelected);
-      const cb = el.querySelector(".tree-item-checkbox");
-      if (cb) cb.checked = isSelected;
-    }
+    // Resolve: match viewer IDs against our known objects
+    const resolvedUids = new Set();
+    const unmatchedIds = []; // for diagnostics
 
-    // Scroll first selected item into view
-    for (const uid of viewerSelectedUids) {
-      const el = document.querySelector(`.tree-item[data-uid="${uid}"]`);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        break;
+    for (const [modelId, viewerIds] of Object.entries(viewerIdsByModel)) {
+      const knownSet = knownIdsByModel[modelId] || new Set();
+
+      for (const id of viewerIds) {
+        const uid = `${modelId}:${id}`;
+        if (knownSet.has(id)) {
+          // Direct match — this object is in our panel
+          resolvedUids.add(uid);
+        } else {
+          // No direct match — this might be a parent/assembly node
+          // Try to find children: any object in the same model that could be a child
+          // We'll attempt to fetch this object's properties to find its name/assembly
+          unmatchedIds.push({ modelId, id });
+        }
       }
     }
 
-    updateSummary();
-    notifySelectionChanged();
-    applyHighlightColors();
+    // For unmatched IDs: try to resolve via viewer API (async, best-effort)
+    // In the meantime, if we have direct matches, use those
+    if (unmatchedIds.length > 0 && resolvedUids.size === 0) {
+      // None of the incoming IDs matched directly — try hierarchy resolution
+      resolveHierarchySelection(unmatchedIds);
+    }
 
-    console.log(`[ObjectExplorer] Synced ${viewerSelectedUids.size} objects from viewer`);
+    // If we got at least some matches, apply them immediately
+    if (resolvedUids.size > 0) {
+      applyViewerSelection(resolvedUids);
+    } else if (unmatchedIds.length > 0) {
+      // All IDs unmatched — the async resolver will handle it
+      console.log(`[ObjectExplorer] ${unmatchedIds.length} viewer IDs not in panel — resolving via hierarchy...`);
+    }
+
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
+  }
+}
+
+// Apply resolved selection to the panel UI
+function applyViewerSelection(resolvedUids) {
+  // Replace panel selection
+  selectedIds.clear();
+  for (const uid of resolvedUids) {
+    selectedIds.add(uid);
+  }
+
+  // Update tree UI checkboxes and auto-expand collapsed groups
+  const treeItems = document.querySelectorAll(".tree-item");
+  for (const el of treeItems) {
+    const uid = el.dataset.uid;
+    const isSelected = selectedIds.has(uid);
+    el.classList.toggle("selected", isSelected);
+    const cb = el.querySelector(".tree-item-checkbox");
+    if (cb) cb.checked = isSelected;
+
+    // Auto-expand parent group if selected item is inside a collapsed group
+    if (isSelected) {
+      const parentGroup = el.closest(".tree-group");
+      if (parentGroup && parentGroup.classList.contains("collapsed")) {
+        parentGroup.classList.remove("collapsed");
+      }
+    }
+  }
+
+  // Scroll first selected item into view
+  const firstSelected = document.querySelector(".tree-item.selected");
+  if (firstSelected) {
+    firstSelected.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  updateSummary();
+  notifySelectionChanged();
+  applyHighlightColors();
+
+  console.log(`[ObjectExplorer] Synced ${resolvedUids.size} objects from viewer`);
+}
+
+// Resolve unmatched viewer IDs by fetching their properties and matching
+// against our allObjects by assembly/name/type (handles parent→children selection)
+async function resolveHierarchySelection(unmatchedIds) {
+  const resolvedUids = new Set();
+
+  for (const { modelId, id } of unmatchedIds) {
+    try {
+      // Fetch properties of the unmatched object
+      const propsArray = await viewerRef.getObjectProperties(modelId, [id]);
+      if (!propsArray || propsArray.length === 0) continue;
+
+      const props = propsArray[0];
+      const parentName = props.product?.name || "";
+      const parentClass = props.class || "";
+
+      // Find all our panel objects that belong to this parent
+      // Match by: same model + (assembly matches parent name, or type matches parent class)
+      for (const obj of allObjects) {
+        if (obj.modelId !== modelId) continue;
+
+        const matches =
+          (parentName && (obj.assembly === parentName || obj.name === parentName || obj.group === parentName)) ||
+          (parentClass && obj.ifcClass === parentClass && parentClass !== "IfcProject" && parentClass !== "IfcSite");
+
+        if (matches) {
+          resolvedUids.add(`${obj.modelId}:${obj.id}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[ObjectExplorer] Could not resolve hierarchy for ${modelId}:${id}:`, e);
+    }
+  }
+
+  // If we resolved some children, apply them
+  if (resolvedUids.size > 0) {
+    applyViewerSelection(resolvedUids);
+    console.log(`[ObjectExplorer] Hierarchy resolved: ${resolvedUids.size} child objects selected`);
+  } else {
+    // Last resort: just use the raw IDs (they might be valid but weren't in our scan)
+    const rawUids = new Set();
+    for (const { modelId, id } of unmatchedIds) {
+      rawUids.add(`${modelId}:${id}`);
+    }
+    applyViewerSelection(rawUids);
+    console.log(`[ObjectExplorer] Used ${rawUids.size} raw viewer IDs (not in panel scan)`);
   }
 }
 
