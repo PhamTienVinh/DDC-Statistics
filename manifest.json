@@ -2,6 +2,6 @@
   "title": "TC Object Explorer",
   "description": "Search, filter, highlight IFC objects. Export steel volume & weight statistics to Excel.",
   "version": "1.0.0",
-  "entry": "https://phamtienvinh.github.io/index.html",
+  "entry": "https://phamtienvinh.github.io/TC-Object-Explorer",
   "type": "3d"
 }
