@@ -434,6 +434,7 @@ function renderTree() {
           updateSummary();
           notifySelectionChanged();
           applyHighlightColors();
+          syncSelectionToViewer();
           return;
         }
       }
@@ -460,6 +461,7 @@ function renderTree() {
       updateSummary();
       notifySelectionChanged();
       applyHighlightColors();
+      syncSelectionToViewer();
     });
   });
 }
@@ -477,6 +479,7 @@ function toggleSelection(uid, el) {
   updateSummary();
   notifySelectionChanged();
   applyHighlightColors();
+  syncSelectionToViewer();
 }
 
 function getGroupKey(obj, groupBy) {
@@ -657,7 +660,7 @@ function getObjectLabel(obj) {
 
 // ── Handle TC Viewer selection → sync tree checkboxes ──
 // This is called when user selects objects via single-click or area-select in TC 3D viewer.
-// We sync the TC viewer's selection to our panel in real-time.
+// We merge the viewer's selection into our panel and keep existing selections (persistent memory).
 function handleViewerSelectionChanged(data) {
   if (!allObjects || allObjects.length === 0) return;
 
@@ -687,8 +690,16 @@ function handleViewerSelectionChanged(data) {
       }
     }
 
-    // Replace panel selection with viewer selection (sync from 3D view)
-    selectedIds.clear();
+    // PERSISTENT SELECTION: if viewer sends empty selection (user clicked on
+    // empty space or switched tool), keep existing panel selections intact.
+    if (viewerSelectedUids.size === 0) {
+      console.log("[ObjectExplorer] Viewer sent empty selection — keeping existing panel selection");
+      // Re-sync our existing selections back to the viewer so they stay highlighted
+      syncSelectionToViewer();
+      return;
+    }
+
+    // ADDITIVE MERGE: add viewer-selected objects to existing panel selection
     for (const uid of viewerSelectedUids) {
       selectedIds.add(uid);
     }
@@ -703,11 +714,12 @@ function handleViewerSelectionChanged(data) {
       if (cb) cb.checked = isSelected;
     }
 
-    // Scroll first selected item into view
-    if (viewerSelectedUids.size > 0) {
-      const firstSelected = document.querySelector(".tree-item.selected");
-      if (firstSelected) {
-        firstSelected.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    // Scroll first newly selected item into view
+    for (const uid of viewerSelectedUids) {
+      const el = document.querySelector(`.tree-item[data-uid="${uid}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        break;
       }
     }
 
@@ -715,7 +727,10 @@ function handleViewerSelectionChanged(data) {
     notifySelectionChanged();
     applyHighlightColors();
 
-    console.log(`[ObjectExplorer] Synced ${viewerSelectedUids.size} objects from TC viewer`);
+    // Sync full selection (including previously selected) back to TC viewer
+    syncSelectionToViewer();
+
+    console.log(`[ObjectExplorer] Added ${viewerSelectedUids.size} objects from TC viewer (total: ${selectedIds.size})`);
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
   }
