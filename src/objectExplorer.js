@@ -1118,8 +1118,6 @@ function getGroupKey(obj, groupBy) {
       return obj.name;
     case "group":
       return obj.group;
-    case "type":
-      return obj.type;
     case "objectType":
       return obj.type || obj.ifcClass || "(Không xác định)";
     case "material":

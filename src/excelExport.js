@@ -172,7 +172,6 @@ export function exportToExcel(data, groupBy, selectedOnly) {
     { key: "name", label: "Tên", sheetName: "Theo Tên" },
     { key: "group", label: "Group", sheetName: "Theo Group" },
     { key: "material", label: "Vật liệu", sheetName: "Theo Vật liệu" },
-    { key: "type", label: "IFC Type", sheetName: "Theo IFC Type" },
   ];
 
   for (const gs of groupSheets) {
@@ -279,7 +278,6 @@ function getGroupKey(obj, groupBy) {
     case "assemblyPosCode": return obj.assemblyPosCode || "(Không xác định)";
     case "name": return obj.name;
     case "group": return obj.group;
-    case "type": return obj.type;
     case "objectType": return obj.type || obj.ifcClass || "(Không xác định)";
     case "material": return obj.material;
     default: return obj.assemblyDisplayName || obj.assembly;
@@ -294,7 +292,6 @@ function getGroupLabel(groupBy) {
     case "assemblyPosCode": return "Assembly Code (Tekla)";
     case "name": return "Tên";
     case "group": return "Group";
-    case "type": return "IFC Type";
     case "objectType": return "Object Type";
     case "material": return "Vật liệu";
     default: return groupBy;
