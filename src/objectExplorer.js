@@ -880,11 +880,17 @@ function selectAssembly() {
   const firstUid = selectedIds.values().next().value;
   const firstObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
   if (!firstObj) {
-    console.log("[ObjectExplorer] No matching object found");
+    console.log("[ObjectExplorer] No matching object found for uid:", firstUid);
     return;
   }
 
-  // Determine matching key with fallback chain: assemblyPos → assemblyName → assemblyInstanceId → assembly
+  console.log("[SelectAssembly] First object:", firstObj.name,
+    "| assemblyPos:", firstObj.assemblyPos,
+    "| assemblyName:", firstObj.assemblyName,
+    "| assembly:", firstObj.assembly,
+    "| volume:", firstObj.volume);
+
+  // Determine matching key with fallback chain
   let matchKey = "";
   let matchField = "";
   if (firstObj.assemblyPos) {
@@ -902,22 +908,27 @@ function selectAssembly() {
   }
 
   if (!matchKey) {
-    console.log("[ObjectExplorer] Selected object has no assembly info");
+    console.log("[SelectAssembly] No assembly info found");
     return;
   }
 
-  console.log(`[ObjectExplorer] Selecting assembly by ${matchField}: "${matchKey}"`);
+  console.log(`[SelectAssembly] Matching by ${matchField} = "${matchKey}"`);
 
   // Select all objects matching the same key
   let count = 0;
+  let totalVol = 0;
   for (const obj of allObjects) {
-    const objValue = obj[matchField];
-    if (objValue === matchKey) {
-      selectedIds.add(`${obj.modelId}:${obj.id}`);
+    if (obj[matchField] === matchKey) {
+      const uid = `${obj.modelId}:${obj.id}`;
+      selectedIds.add(uid);
+      totalVol += obj.volume || 0;
       count++;
+      if (count <= 5) {
+        console.log(`[SelectAssembly]   Part: "${obj.name}" volume=${obj.volume} weight=${obj.weight} uid=${uid}`);
+      }
     }
   }
-  console.log(`[ObjectExplorer] Selected ${count} objects in assembly`);
+  console.log(`[SelectAssembly] Total: ${count} objects, volume=${totalVol}`);
 
   // Update tree UI
   const treeItems = document.querySelectorAll(".tree-item");
@@ -1321,14 +1332,26 @@ function updateSummary() {
 
   if (selectedIds.size > 0) {
     let totalVolume = 0, totalWeight = 0, totalArea = 0;
+    let matchCount = 0;
+
+    // Debug: log what selectedIds look like
+    const sampleIds = Array.from(selectedIds).slice(0, 3);
+    console.log("[UpdateSummary] Sample selectedIds:", sampleIds);
+
     for (const obj of allObjects) {
       const uid = `${obj.modelId}:${obj.id}`;
       if (selectedIds.has(uid)) {
         totalVolume += obj.volume || 0;
         totalWeight += obj.weight || 0;
         totalArea += obj.area || 0;
+        matchCount++;
+        // Debug: log first 3 matched objects
+        if (matchCount <= 3) {
+          console.log(`[UpdateSummary] Matched: uid=${uid} vol=${obj.volume} wt=${obj.weight} area=${obj.area}`);
+        }
       }
     }
+    console.log(`[UpdateSummary] Matched ${matchCount}/${selectedIds.size} objects. V=${totalVolume} W=${totalWeight} A=${totalArea}`);
 
     // Build stats text - always show all fields
     const parts = [];
