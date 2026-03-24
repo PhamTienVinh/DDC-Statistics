@@ -39,6 +39,7 @@ jobs:
       - name: Copy static files to dist
         run: |
           cp manifest.json dist/
+          cp icon.png dist/
           
       - name: Setup Pages
         uses: actions/configure-pages@v4
