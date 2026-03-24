@@ -164,20 +164,12 @@ async function scanObjects() {
 
     console.log(`[ObjectExplorer] Raw scanned ${allObjects.length} objects`);
 
-    // Filter: remove specific non-3D objects (Revit parent nodes)
+    // Filter: remove non-3D objects by IFC class only
     const beforeFilter = allObjects.length;
+    const excludedClasses = new Set(['ifcsite', 'ifcbuilding', 'ifcproject', 'ifcbuildingstorey']);
     allObjects = allObjects.filter(obj => {
       const cls = (obj.ifcClass || '').toLowerCase();
-      const name = (obj.name || '').toLowerCase();
-
-      // Exclude IfcSite, IfcBuilding, IfcProject
-      if (cls === 'ifcsite' || cls === 'ifcbuilding' || cls === 'ifcproject') return false;
-      if (name === 'ifcsite' || name === 'ifcbuilding' || name === 'ifcproject') return false;
-
-      // Exclude Model Group, Assembly (Revit non-3D parent nodes)
-      if (name === 'model group' || name === 'modelgroup') return false;
-      if (name === 'assembly') return false;
-
+      if (cls && excludedClasses.has(cls)) return false;
       return true;
     });
     console.log(`[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects`);
