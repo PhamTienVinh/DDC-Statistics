@@ -162,17 +162,7 @@ async function scanObjects() {
       }
     }
 
-    console.log(`[ObjectExplorer] Raw scanned ${allObjects.length} objects`);
-
-    // Filter: remove non-3D objects by IFC class only
-    const beforeFilter = allObjects.length;
-    const excludedClasses = new Set(['ifcsite', 'ifcbuilding', 'ifcproject', 'ifcbuildingstorey']);
-    allObjects = allObjects.filter(obj => {
-      const cls = (obj.ifcClass || '').toLowerCase();
-      if (cls && excludedClasses.has(cls)) return false;
-      return true;
-    });
-    console.log(`[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects`);
+    console.log(`[ObjectExplorer] Scanned ${allObjects.length} objects`);
 
     filteredObjects = [...allObjects];
     selectedIds.clear();
