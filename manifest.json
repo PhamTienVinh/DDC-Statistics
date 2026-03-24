@@ -1,8 +1,8 @@
 {
-  "title": "TC Object Explorer",
+  "title": "DDC Statistics",
   "description": "Search, filter, highlight IFC objects. Export steel volume & weight statistics to Excel.",
   "version": "1.0.0",
-  "icon": "https://phamtienvinh.github.io/TC-Object-Explorer/icon.png",
-  "url": "https://phamtienvinh.github.io/TC-Object-Explorer/index.html",
+  "icon": "https://phamtienvinh.github.io/DDC-Statistics/icon.png",
+  "url": "https://phamtienvinh.github.io/DDC-Statistics/index.html",
   "type": "3d"
 }

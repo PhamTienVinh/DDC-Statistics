@@ -18,8 +18,7 @@ let searchTimeout = null;
 let lastClickedItem = null; // for Shift+click range selection
 let lastClickAction = "select"; // "select" or "deselect" — for Shift range
 let isSyncingFromViewer = false; // flag to prevent re-entry during sync
-let lastViewerSelectionKey = ''; // dedup key for polling
-
+let lastViewerSelectionKey = ""; // dedup key for polling
 
 // ── Init ──
 export function initObjectExplorer(api, viewer) {
@@ -36,7 +35,10 @@ export function initObjectExplorer(api, viewer) {
   onEvent("viewer.onSelectionChanged", (data) => {
     // Skip echo events from our own setSelection calls
     if (isSyncingFromViewer) return;
-    console.log("[ObjectExplorer] onSelectionChanged event:", JSON.stringify(data).substring(0, 500));
+    console.log(
+      "[ObjectExplorer] onSelectionChanged event:",
+      JSON.stringify(data).substring(0, 500),
+    );
     handleViewerSelectionChanged(data);
   });
 
@@ -48,21 +50,35 @@ export function initObjectExplorer(api, viewer) {
       if (sel) {
         handleViewerSelectionChanged(sel);
       }
-    } catch (e) { /* ignore polling errors */ }
+    } catch (e) {
+      /* ignore polling errors */
+    }
   }, 2000);
 
   // UI bindings
-  document.getElementById("search-input").addEventListener("input", onSearchInput);
-  document.getElementById("search-clear-btn").addEventListener("click", clearSearch);
-  document.getElementById("group-by-select").addEventListener("change", renderTree);
-  document.getElementById("btn-isolate").addEventListener("click", toggleIsolate);
+  document
+    .getElementById("search-input")
+    .addEventListener("input", onSearchInput);
+  document
+    .getElementById("search-clear-btn")
+    .addEventListener("click", clearSearch);
+  document
+    .getElementById("group-by-select")
+    .addEventListener("change", renderTree);
+  document
+    .getElementById("btn-isolate")
+    .addEventListener("click", toggleIsolate);
   document.getElementById("btn-reset").addEventListener("click", resetAll);
   document.getElementById("btn-refresh").addEventListener("click", scanObjects);
 }
 
 // ── Export data for statistics module ──
-export function getAllObjects() { return allObjects; }
-export function getSelectedIds() { return selectedIds; }
+export function getAllObjects() {
+  return allObjects;
+}
+export function getSelectedIds() {
+  return selectedIds;
+}
 export function getSelectedObjects() {
   if (selectedIds.size === 0) return [];
   return allObjects.filter((o) => selectedIds.has(`${o.modelId}:${o.id}`));
@@ -93,7 +109,11 @@ async function scanObjects() {
     let modelObjectsList = [];
     try {
       modelObjectsList = await viewerRef.getObjects();
-      console.log("[ObjectExplorer] getObjects() returned:", modelObjectsList?.length, "models");
+      console.log(
+        "[ObjectExplorer] getObjects() returned:",
+        modelObjectsList?.length,
+        "models",
+      );
     } catch (e) {
       console.warn("[ObjectExplorer] getObjects() failed:", e);
     }
@@ -117,7 +137,9 @@ async function scanObjects() {
           }
         } else {
           // Objects are minimal (just IDs) — need to fetch properties
-          const objectIds = objects.map((o) => (typeof o === "number" ? o : o.id));
+          const objectIds = objects.map((o) =>
+            typeof o === "number" ? o : o.id,
+          );
           await fetchAndParseProperties(modelId, objectIds);
         }
       }
@@ -140,7 +162,10 @@ async function scanObjects() {
             }
           }
         } catch (e) {
-          console.warn(`[ObjectExplorer] Per-model fetch failed for ${model.id}:`, e);
+          console.warn(
+            `[ObjectExplorer] Per-model fetch failed for ${model.id}:`,
+            e,
+          );
         }
       }
     }
@@ -151,13 +176,21 @@ async function scanObjects() {
         if (model.state && model.state !== "loaded") continue;
         try {
           // Get root entities via spatial hierarchy
-          const rootEntities = await viewerRef.getHierarchyChildren(model.id, [0], 1, true);
+          const rootEntities = await viewerRef.getHierarchyChildren(
+            model.id,
+            [0],
+            1,
+            true,
+          );
           if (rootEntities && rootEntities.length > 0) {
             const entityIds = rootEntities.map((e) => e.id);
             await fetchAndParseProperties(model.id, entityIds);
           }
         } catch (e) {
-          console.warn(`[ObjectExplorer] Hierarchy fetch failed for ${model.id}:`, e);
+          console.warn(
+            `[ObjectExplorer] Hierarchy fetch failed for ${model.id}:`,
+            e,
+          );
         }
       }
     }
@@ -166,8 +199,12 @@ async function scanObjects() {
 
     // Filter: exclude objects with no physical data (volume, weight, area all = 0)
     const beforeFilter = allObjects.length;
-    allObjects = allObjects.filter(obj => obj.volume > 0 || obj.weight > 0 || obj.area > 0);
-    console.log(`[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects (removed ${beforeFilter - allObjects.length} non-3D)`);
+    allObjects = allObjects.filter(
+      (obj) => obj.volume > 0 || obj.weight > 0 || obj.area > 0,
+    );
+    console.log(
+      `[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects (removed ${beforeFilter - allObjects.length} non-3D)`,
+    );
 
     filteredObjects = [...allObjects];
     selectedIds.clear();
@@ -176,8 +213,9 @@ async function scanObjects() {
     hidePlaceholder();
 
     // Notify statistics module
-    window.dispatchEvent(new CustomEvent("objects-scanned", { detail: allObjects }));
-
+    window.dispatchEvent(
+      new CustomEvent("objects-scanned", { detail: allObjects }),
+    );
   } catch (error) {
     console.error("[ObjectExplorer] Scan failed:", error);
   } finally {
@@ -202,10 +240,19 @@ async function fetchAndParseProperties(modelId, objectIds) {
       // Add with minimal info
       for (const objId of batch) {
         allObjects.push({
-          id: objId, modelId,
-          name: `Object ${objId}`, assembly: "", group: "",
-          type: "", material: "", volume: 0, weight: 0,
-          area: 0, length: 0, profile: "", ifcClass: "",
+          id: objId,
+          modelId,
+          name: `Object ${objId}`,
+          assembly: "",
+          group: "",
+          type: "",
+          material: "",
+          volume: 0,
+          weight: 0,
+          area: 0,
+          length: 0,
+          profile: "",
+          ifcClass: "",
         });
       }
     }
@@ -262,71 +309,131 @@ function parseObjectProperties(props, modelId) {
       }
 
       // Assembly (including Tekla-specific property names)
-      if (propName === 'assembly' || propName === 'assemblycode' || propName === 'assembly code'
-          || propName === 'assembly mark' || propName === 'assemblymark'
-          || propName === 'assembly_mark' || propName === 'assembly_pos'
-          || propName === 'assemblypos' || propName === 'assembly pos'
-          || propName === 'assembly_name' || propName === 'assemblyname'
-          || propName === 'assembly name' || propName === 'tekla assembly mark'
-          || propName === 'tekla_assembly' || propName === 'mainmark'
-          || propName === 'main mark' || propName === 'part_pos'
-          || propName === 'partpos' || propName === 'part pos'
-          || propName === 'preliminary mark' || propName === 'preliminarymark') {
-        if (!result.assembly) result.assembly = String(propValue || '');
+      if (
+        propName === "assembly" ||
+        propName === "assemblycode" ||
+        propName === "assembly code" ||
+        propName === "assembly mark" ||
+        propName === "assemblymark" ||
+        propName === "assembly_mark" ||
+        propName === "assembly_pos" ||
+        propName === "assemblypos" ||
+        propName === "assembly pos" ||
+        propName === "assembly_name" ||
+        propName === "assemblyname" ||
+        propName === "assembly name" ||
+        propName === "tekla assembly mark" ||
+        propName === "tekla_assembly" ||
+        propName === "mainmark" ||
+        propName === "main mark" ||
+        propName === "part_pos" ||
+        propName === "partpos" ||
+        propName === "part pos" ||
+        propName === "preliminary mark" ||
+        propName === "preliminarymark"
+      ) {
+        if (!result.assembly) result.assembly = String(propValue || "");
       }
 
       // Group
-      if (propName === "group" || propName === "nhóm" || propName === "groupname"
-          || propName === "group name") {
+      if (
+        propName === "group" ||
+        propName === "nhóm" ||
+        propName === "groupname" ||
+        propName === "group name"
+      ) {
         if (!result.group) result.group = String(propValue || "");
       }
 
       // Material
-      if (propName === "material" || propName === "vật liệu" || propName === "materials"
-          || propName === "materialname") {
+      if (
+        propName === "material" ||
+        propName === "vật liệu" ||
+        propName === "materials" ||
+        propName === "materialname"
+      ) {
         if (!result.material) result.material = String(propValue || "");
       }
 
       // Volume (PropertyType.VolumeMeasure = 2, value in m³)
-      if (propType === 2 || propName === "volume" || propName === "thể tích"
-          || propName === "grossvolume" || propName === "netvolume" || propName === "net volume") {
+      if (
+        propType === 2 ||
+        propName === "volume" ||
+        propName === "thể tích" ||
+        propName === "grossvolume" ||
+        propName === "netvolume" ||
+        propName === "net volume"
+      ) {
         const v = parseFloat(propValue);
         if (!isNaN(v) && v > result.volume) result.volume = v;
       }
 
       // Weight (PropertyType.MassMeasure = 3, value in kg)
-      if (propType === 3 || propName === "weight" || propName === "khối lượng"
-          || propName === "grossweight" || propName === "netweight" || propName === "mass") {
+      if (
+        propType === 3 ||
+        propName === "weight" ||
+        propName === "khối lượng" ||
+        propName === "grossweight" ||
+        propName === "netweight" ||
+        propName === "mass"
+      ) {
         const w = parseFloat(propValue);
         if (!isNaN(w) && w > 0 && w > result.weight) result.weight = w;
       }
 
       // Surface Area (m²)
-      if (propName === "area" || propName === "diện tích" || propName === "surfacearea"
-          || propName === "surface area" || propName === "netsurfacearea" || propName === "grosssurfacearea"
-          || propName === "totalsurfacearea" || propName === "netarea" || propName === "grossarea") {
+      if (
+        propName === "area" ||
+        propName === "diện tích" ||
+        propName === "surfacearea" ||
+        propName === "surface area" ||
+        propName === "netsurfacearea" ||
+        propName === "grosssurfacearea" ||
+        propName === "totalsurfacearea" ||
+        propName === "netarea" ||
+        propName === "grossarea"
+      ) {
         const a = parseFloat(propValue);
         if (!isNaN(a) && a > result.area) result.area = a;
       }
 
       // Length (m)
-      if (propName === "length" || propName === "chiều dài" || propName === "span"
-          || propName === "overalllength" || propName === "netlength" || propName === "totallength"
-          || propName === "height" || propName === "chiều cao") {
+      if (
+        propName === "length" ||
+        propName === "chiều dài" ||
+        propName === "span" ||
+        propName === "overalllength" ||
+        propName === "netlength" ||
+        propName === "totallength" ||
+        propName === "height" ||
+        propName === "chiều cao"
+      ) {
         const l = parseFloat(propValue);
         if (!isNaN(l) && l > result.length) result.length = l;
       }
 
       // Profile
-      if (propName === "profile" || propName === "profilename" || propName === "profile name"
-          || propName === "profiletype" || propName === "cross section" || propName === "section"
-          || propName === "sectionname" || propName === "crosssectionarea") {
+      if (
+        propName === "profile" ||
+        propName === "profilename" ||
+        propName === "profile name" ||
+        propName === "profiletype" ||
+        propName === "cross section" ||
+        propName === "section" ||
+        propName === "sectionname" ||
+        propName === "crosssectionarea"
+      ) {
         if (!result.profile) result.profile = String(propValue || "");
       }
 
       // Type from property
-      if (!result.type && (propName === "objecttype" || propName === "type" || propName === "ifctype"
-          || propName === "typename")) {
+      if (
+        !result.type &&
+        (propName === "objecttype" ||
+          propName === "type" ||
+          propName === "ifctype" ||
+          propName === "typename")
+      ) {
         result.type = String(propValue || "");
       }
     }
@@ -346,7 +453,9 @@ function parseObjectProperties(props, modelId) {
 // ── Search ──
 function onSearchInput(e) {
   const query = e.target.value.trim();
-  document.getElementById("search-clear-btn").style.display = query ? "block" : "none";
+  document.getElementById("search-clear-btn").style.display = query
+    ? "block"
+    : "none";
 
   clearTimeout(searchTimeout);
   searchTimeout = setTimeout(() => {
@@ -362,7 +471,7 @@ function onSearchInput(e) {
           o.type.toLowerCase().includes(q) ||
           o.material.toLowerCase().includes(q) ||
           o.ifcClass.toLowerCase().includes(q) ||
-          (o.profile && o.profile.toLowerCase().includes(q))
+          (o.profile && o.profile.toLowerCase().includes(q)),
       );
     }
     updateSummary();
@@ -430,7 +539,8 @@ function renderTree() {
   }
 
   container.innerHTML = html;
-  document.getElementById("groups-count").textContent = `${sortedKeys.length} nhóm`;
+  document.getElementById("groups-count").textContent =
+    `${sortedKeys.length} nhóm`;
 
   // Bind click events with Shift+click support (select AND deselect range)
   const allItems = Array.from(container.querySelectorAll(".tree-item"));
@@ -444,7 +554,7 @@ function renderTree() {
         if (lastIndex >= 0) {
           const start = Math.min(lastIndex, index);
           const end = Math.max(lastIndex, index);
-          const doSelect = (lastClickAction === "select");
+          const doSelect = lastClickAction === "select";
           for (let i = start; i <= end; i++) {
             const item = allItems[i];
             const uid = item.dataset.uid;
@@ -511,24 +621,31 @@ function toggleSelection(uid, el) {
 
 function getGroupKey(obj, groupBy) {
   switch (groupBy) {
-    case "assembly": return obj.assembly;
-    case "name": return obj.name;
-    case "group": return obj.group;
-    case "type": return obj.type;
-    case "material": return obj.material;
-    default: return obj.assembly;
+    case "assembly":
+      return obj.assembly;
+    case "name":
+      return obj.name;
+    case "group":
+      return obj.group;
+    case "type":
+      return obj.type;
+    case "material":
+      return obj.material;
+    default:
+      return obj.assembly;
   }
 }
 
 // ── Highlight ──
-
 
 // Apply colored highlight overlay to all selected objects (auto-highlight)
 async function applyHighlightColors() {
   try {
     // Always reset colors first
     await viewerRef.setObjectState(undefined, { color: "reset" });
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    /* ignore */
+  }
 
   if (selectedIds.size === 0) return;
 
@@ -543,10 +660,12 @@ async function applyHighlightColors() {
           objectRuntimeIds: ids,
         })),
       },
-      { color: { r: 255, g: 220, b: 0, a: 220 } }
+      { color: { r: 255, g: 220, b: 0, a: 220 } },
     );
 
-    console.log(`[ObjectExplorer] Auto-highlighted ${selectedIds.size} objects`);
+    console.log(
+      `[ObjectExplorer] Auto-highlighted ${selectedIds.size} objects`,
+    );
   } catch (e) {
     console.error("[ObjectExplorer] Highlight color failed:", e);
   }
@@ -568,14 +687,16 @@ async function syncSelectionToViewer() {
             objectRuntimeIds: ids,
           })),
         },
-        "set"
+        "set",
       );
     }
   } catch (e) {
     console.warn("[ObjectExplorer] setSelection failed:", e);
   } finally {
     // Keep flag on for 200ms to absorb the echo event
-    setTimeout(() => { isSyncingFromViewer = false; }, 200);
+    setTimeout(() => {
+      isSyncingFromViewer = false;
+    }, 200);
   }
 }
 
@@ -615,7 +736,7 @@ async function toggleIsolate() {
       Object.entries(modelMap).map(([modelId, ids]) => ({
         modelId,
         entityIds: ids,
-      }))
+      })),
     );
     isolateActive = true;
     btn.classList.add("active");
@@ -632,7 +753,7 @@ async function toggleIsolate() {
             objectRuntimeIds: ids,
           })),
         },
-        { visible: true }
+        { visible: true },
       );
       isolateActive = true;
       btn.classList.add("active");
@@ -663,7 +784,7 @@ function buildTooltip(obj) {
   if (obj.ifcClass) parts.push(`IFC Class: ${obj.ifcClass}`);
   if (obj.assembly) parts.push(`Assembly: ${obj.assembly}`);
   if (obj.material) parts.push(`Vật liệu: ${obj.material}`);
-  return parts.join(' | ') || `Object ${obj.id}`;
+  return parts.join(" | ") || `Object ${obj.id}`;
 }
 
 // ── Build a label combining name + profile + type for 3D labels ──
@@ -679,7 +800,7 @@ function getObjectLabel(obj) {
   // IFC Class as last resort
   if (parts.length === 0 && obj.ifcClass) parts.push(obj.ifcClass);
   if (parts.length === 0) parts.push(`Object ${obj.id}`);
-  return parts.join(' — ');
+  return parts.join(" — ");
 }
 
 // ── Handle TC Viewer selection → sync tree checkboxes + statistics ──
@@ -698,7 +819,7 @@ function handleViewerSelectionChanged(data) {
       entries = data.modelObjectIds;
     } else if (Array.isArray(data)) {
       entries = data;
-    } else if (data && typeof data === 'object' && data.modelId) {
+    } else if (data && typeof data === "object" && data.modelId) {
       entries = [data];
     }
 
@@ -707,7 +828,8 @@ function handleViewerSelectionChanged(data) {
         if (!entry || !entry.modelId) continue;
         const modelId = entry.modelId;
         // Try all possible ID field names
-        const ids = entry.objectRuntimeIds || entry.entityIds || entry.ids || [];
+        const ids =
+          entry.objectRuntimeIds || entry.entityIds || entry.ids || [];
         for (const id of ids) {
           incomingUids.add(`${modelId}:${id}`);
         }
@@ -715,18 +837,20 @@ function handleViewerSelectionChanged(data) {
     }
 
     // Step 2: Dedup — if same selection as last time (from polling), skip
-    const selKey = Array.from(incomingUids).sort().join(',');
+    const selKey = Array.from(incomingUids).sort().join(",");
     if (selKey === lastViewerSelectionKey) return;
     lastViewerSelectionKey = selKey;
 
     // Step 3: Empty selection → keep panel state (persistent memory)
     if (incomingUids.size === 0) {
-      console.log("[ObjectExplorer] Viewer empty selection — keeping panel state");
+      console.log(
+        "[ObjectExplorer] Viewer empty selection — keeping panel state",
+      );
       return;
     }
 
     // Step 4: Match incoming IDs against our allObjects
-    const knownUids = new Set(allObjects.map(o => `${o.modelId}:${o.id}`));
+    const knownUids = new Set(allObjects.map((o) => `${o.modelId}:${o.id}`));
     const matchedUids = new Set();
     const unmatchedCount = { count: 0 };
 
@@ -738,11 +862,15 @@ function handleViewerSelectionChanged(data) {
       }
     }
 
-    console.log(`[ObjectExplorer] Viewer selection: ${incomingUids.size} IDs, ${matchedUids.size} matched, ${unmatchedCount.count} unmatched`);
+    console.log(
+      `[ObjectExplorer] Viewer selection: ${incomingUids.size} IDs, ${matchedUids.size} matched, ${unmatchedCount.count} unmatched`,
+    );
 
     // If zero matches, keep current panel state
     if (matchedUids.size === 0) {
-      console.log("[ObjectExplorer] No matching objects in panel for viewer selection");
+      console.log(
+        "[ObjectExplorer] No matching objects in panel for viewer selection",
+      );
       return;
     }
 
@@ -780,7 +908,6 @@ function handleViewerSelectionChanged(data) {
     updateSummary();
     notifySelectionChanged();
     applyHighlightColors();
-
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
   }
@@ -798,10 +925,10 @@ function createLabelSvgDataUrl(text) {
     </defs>
     <rect x="0" y="0" width="${width}" height="28" rx="6" ry="6"
           fill="rgba(13,17,23,0.9)" stroke="#58a6ff" stroke-width="1.5" filter="url(#s)"/>
-    <text x="${width/2}" y="18" text-anchor="middle"
+    <text x="${width / 2}" y="18" text-anchor="middle"
           font-family="Inter,Arial,sans-serif" font-size="11" font-weight="600"
           fill="#e6edf3">${escXml(shortText)}</text>
-    <polygon points="${width/2-5},28 ${width/2},34 ${width/2+5},28" fill="rgba(13,17,23,0.9)" stroke="#58a6ff" stroke-width="1"/>
+    <polygon points="${width / 2 - 5},28 ${width / 2},34 ${width / 2 + 5},28" fill="rgba(13,17,23,0.9)" stroke="#58a6ff" stroke-width="1"/>
   </svg>`;
 
   return "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svg)));
@@ -819,12 +946,19 @@ async function resetAll() {
   try {
     // Clear selection
     await viewerRef.setSelection({ modelObjectIds: [] }, "set");
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    /* ignore */
+  }
 
   try {
     // Reset object states (visibility, color)
-    await viewerRef.setObjectState(undefined, { visible: "reset", color: "reset" });
-  } catch (e) { /* ignore */ }
+    await viewerRef.setObjectState(undefined, {
+      visible: "reset",
+      color: "reset",
+    });
+  } catch (e) {
+    /* ignore */
+  }
 
   updateSummary();
   notifySelectionChanged();
@@ -846,12 +980,16 @@ function buildModelMap() {
 }
 
 function updateSummary() {
-  document.getElementById("total-objects-count").textContent = `${filteredObjects.length} objects`;
-  document.getElementById("selected-objects-count").textContent = `${selectedIds.size} đã chọn`;
+  document.getElementById("total-objects-count").textContent =
+    `${filteredObjects.length} objects`;
+  document.getElementById("selected-objects-count").textContent =
+    `${selectedIds.size} đã chọn`;
 }
 
 function showLoading(show) {
-  document.getElementById("loading-overlay").style.display = show ? "flex" : "none";
+  document.getElementById("loading-overlay").style.display = show
+    ? "flex"
+    : "none";
 }
 
 function showPlaceholder() {
@@ -880,7 +1018,9 @@ function escXml(str) {
 
 // ── Notify statistics module of selection change ──
 function notifySelectionChanged() {
-  window.dispatchEvent(new CustomEvent("selection-changed", {
-    detail: { selectedIds: Array.from(selectedIds), count: selectedIds.size }
-  }));
+  window.dispatchEvent(
+    new CustomEvent("selection-changed", {
+      detail: { selectedIds: Array.from(selectedIds), count: selectedIds.size },
+    }),
+  );
 }
