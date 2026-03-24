@@ -524,10 +524,16 @@ select:focus {
   white-space: nowrap;
 }
 
+.tree-item-badge.profile {
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--accent);
+  border: 1px solid var(--accent-dark);
+}
+
 /* ===== STAT CARDS ===== */
 .stats-cards {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   padding: 12px;
   flex-shrink: 0;
@@ -556,8 +562,10 @@ select:focus {
 
 .stat-card:nth-child(1)::before { background: var(--gradient-1); }
 .stat-card:nth-child(2)::before { background: var(--gradient-3); }
-.stat-card:nth-child(3)::before { background: var(--gradient-2); }
-.stat-card:nth-child(4)::before { background: var(--gradient-4); }
+.stat-card:nth-child(3)::before { background: linear-gradient(135deg, #f5af19 0%, #f12711 100%); }
+.stat-card:nth-child(4)::before { background: linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%); }
+.stat-card:nth-child(5)::before { background: var(--gradient-2); }
+.stat-card:nth-child(6)::before { background: var(--gradient-4); }
 
 .stat-card:hover {
   transform: translateY(-2px);
@@ -746,4 +754,8 @@ select:focus {
   .stats-cards { grid-template-columns: 1fr; }
   .action-bar { flex-wrap: wrap; }
   .action-btn { flex: 1; justify-content: center; min-width: 80px; }
+}
+
+@media (min-width: 361px) and (max-width: 500px) {
+  .stats-cards { grid-template-columns: repeat(2, 1fr); }
 }

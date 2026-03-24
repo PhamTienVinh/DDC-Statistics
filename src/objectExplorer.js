@@ -10,7 +10,7 @@ import { onEvent } from "./main.js";
 // ── State ──
 let apiRef = null;
 let viewerRef = null;
-let allObjects = []; // { id, modelId, name, assembly, group, type, material, volume, weight, class }
+let allObjects = []; // { id, modelId, name, assembly, group, type, material, volume, weight, area, length, profile, class }
 let filteredObjects = [];
 let selectedIds = new Set(); // Set of "modelId:objectId"
 let labelsVisible = false;
@@ -19,6 +19,8 @@ let highlightActive = false;
 let searchTimeout = null;
 let currentLabelIcons = []; // track added icon IDs for removal
 let lastClickedItem = null; // for Shift+click range selection
+let lastClickAction = "select"; // "select" or "deselect" — for Shift range
+let isSyncingFromViewer = false; // prevent infinite loop with TC selection sync
 
 // ── Init ──
 export function initObjectExplorer(api, viewer) {
@@ -31,11 +33,17 @@ export function initObjectExplorer(api, viewer) {
     scanObjects();
   });
 
+  // Listen for TC viewer selection changes (Feature #4)
+  onEvent("viewer.onSelectionChanged", (data) => {
+    if (isSyncingFromViewer) return;
+    handleViewerSelectionChanged(data);
+  });
+
   // UI bindings
   document.getElementById("search-input").addEventListener("input", onSearchInput);
   document.getElementById("search-clear-btn").addEventListener("click", clearSearch);
   document.getElementById("group-by-select").addEventListener("change", renderTree);
-  document.getElementById("btn-highlight").addEventListener("click", highlightSelected);
+  document.getElementById("btn-highlight").addEventListener("click", toggleHighlight);
   document.getElementById("btn-isolate").addEventListener("click", toggleIsolate);
   document.getElementById("btn-show-labels").addEventListener("click", toggleLabels);
   document.getElementById("btn-reset").addEventListener("click", resetAll);
@@ -181,7 +189,8 @@ async function fetchAndParseProperties(modelId, objectIds) {
         allObjects.push({
           id: objId, modelId,
           name: `Object ${objId}`, assembly: "", group: "",
-          type: "", material: "", volume: 0, weight: 0, ifcClass: "",
+          type: "", material: "", volume: 0, weight: 0,
+          area: 0, length: 0, profile: "", ifcClass: "",
         });
       }
     }
@@ -204,6 +213,9 @@ function parseObjectProperties(props, modelId) {
     material: "",
     volume: 0,
     weight: 0,
+    area: 0,
+    length: 0,
+    profile: "",
     ifcClass: props.class || "",
   };
 
@@ -267,8 +279,32 @@ function parseObjectProperties(props, modelId) {
         if (!isNaN(w) && w > 0 && w > result.weight) result.weight = w;
       }
 
+      // Surface Area (m²)
+      if (propName === "area" || propName === "diện tích" || propName === "surfacearea"
+          || propName === "surface area" || propName === "netsurfacearea" || propName === "grosssurfacearea"
+          || propName === "totalsurfacearea" || propName === "netarea" || propName === "grossarea") {
+        const a = parseFloat(propValue);
+        if (!isNaN(a) && a > result.area) result.area = a;
+      }
+
+      // Length (m)
+      if (propName === "length" || propName === "chiều dài" || propName === "span"
+          || propName === "overalllength" || propName === "netlength" || propName === "totallength"
+          || propName === "height" || propName === "chiều cao") {
+        const l = parseFloat(propValue);
+        if (!isNaN(l) && l > result.length) result.length = l;
+      }
+
+      // Profile
+      if (propName === "profile" || propName === "profilename" || propName === "profile name"
+          || propName === "profiletype" || propName === "cross section" || propName === "section"
+          || propName === "sectionname" || propName === "crosssectionarea") {
+        if (!result.profile) result.profile = String(propValue || "");
+      }
+
       // Type from property
-      if (!result.type && (propName === "objecttype" || propName === "type" || propName === "ifctype")) {
+      if (!result.type && (propName === "objecttype" || propName === "type" || propName === "ifctype"
+          || propName === "typename")) {
         result.type = String(propValue || "");
       }
     }
@@ -303,7 +339,8 @@ function onSearchInput(e) {
           o.group.toLowerCase().includes(q) ||
           o.type.toLowerCase().includes(q) ||
           o.material.toLowerCase().includes(q) ||
-          o.ifcClass.toLowerCase().includes(q)
+          o.ifcClass.toLowerCase().includes(q) ||
+          (o.profile && o.profile.toLowerCase().includes(q))
       );
     }
     updateSummary();
@@ -354,10 +391,14 @@ function renderTree() {
     for (const obj of items) {
       const uid = `${obj.modelId}:${obj.id}`;
       const isSelected = selectedIds.has(uid);
+      const displayLabel = getObjectDisplayName(obj);
+      const tooltip = buildTooltip(obj);
       html += `<div class="tree-item${isSelected ? " selected" : ""}" data-uid="${escHtml(uid)}" data-model-id="${escHtml(obj.modelId)}" data-object-id="${obj.id}">`;
       html += `<input type="checkbox" class="tree-item-checkbox" ${isSelected ? "checked" : ""} />`;
-      html += `<span class="tree-item-name" title="${escHtml(obj.name)}">${escHtml(obj.name)}</span>`;
-      if (obj.type) {
+      html += `<span class="tree-item-name" title="${escHtml(tooltip)}">${escHtml(displayLabel)}</span>`;
+      if (obj.profile) {
+        html += `<span class="tree-item-badge profile">${escHtml(obj.profile)}</span>`;
+      } else if (obj.type) {
         html += `<span class="tree-item-badge">${escHtml(obj.type)}</span>`;
       }
       html += `</div>`;
@@ -369,24 +410,31 @@ function renderTree() {
   container.innerHTML = html;
   document.getElementById("groups-count").textContent = `${sortedKeys.length} nhóm`;
 
-  // Bind click events with Shift+click support
+  // Bind click events with Shift+click support (select AND deselect range)
   const allItems = Array.from(container.querySelectorAll(".tree-item"));
   allItems.forEach((el, index) => {
     el.addEventListener("click", (e) => {
       if (e.target.classList.contains("tree-item-checkbox")) return;
 
       if (e.shiftKey && lastClickedItem !== null) {
-        // Shift+click: select range
+        // Shift+click: apply same action (select or deselect) to range
         const lastIndex = allItems.indexOf(lastClickedItem);
         if (lastIndex >= 0) {
           const start = Math.min(lastIndex, index);
           const end = Math.max(lastIndex, index);
+          const doSelect = (lastClickAction === "select");
           for (let i = start; i <= end; i++) {
             const item = allItems[i];
             const uid = item.dataset.uid;
-            selectedIds.add(uid);
-            item.classList.add("selected");
-            item.querySelector(".tree-item-checkbox").checked = true;
+            if (doSelect) {
+              selectedIds.add(uid);
+              item.classList.add("selected");
+              item.querySelector(".tree-item-checkbox").checked = true;
+            } else {
+              selectedIds.delete(uid);
+              item.classList.remove("selected");
+              item.querySelector(".tree-item-checkbox").checked = false;
+            }
           }
           updateSummary();
           notifySelectionChanged();
@@ -396,6 +444,8 @@ function renderTree() {
       }
 
       const uid = el.dataset.uid;
+      // Track whether this click is select or deselect
+      lastClickAction = selectedIds.has(uid) ? "deselect" : "select";
       toggleSelection(uid, el);
       lastClickedItem = el;
     });
@@ -405,9 +455,11 @@ function renderTree() {
       if (e.target.checked) {
         selectedIds.add(uid);
         el.classList.add("selected");
+        lastClickAction = "select";
       } else {
         selectedIds.delete(uid);
         el.classList.remove("selected");
+        lastClickAction = "deselect";
       }
       lastClickedItem = el;
       updateSummary();
@@ -461,10 +513,23 @@ async function highlightSingle(modelId, objectId) {
   }
 }
 
-async function highlightSelected() {
-  // Toggle highlight mode ON
+async function toggleHighlight() {
+  const btn = document.getElementById("btn-highlight");
+
+  if (highlightActive) {
+    // Toggle OFF — clear highlight colors
+    highlightActive = false;
+    btn.classList.remove("active");
+    try {
+      await viewerRef.setObjectState(undefined, { color: "reset" });
+    } catch (e) { /* ignore */ }
+    console.log("[ObjectExplorer] Highlight mode OFF");
+    return;
+  }
+
+  // Toggle ON
   highlightActive = true;
-  document.getElementById("btn-highlight").classList.add("active");
+  btn.classList.add("active");
 
   if (selectedIds.size === 0) {
     console.log("[ObjectExplorer] Highlight mode ON — no objects selected yet");
@@ -687,18 +752,91 @@ async function toggleLabels() {
   }
 }
 
-// ── Build a descriptive label for an object ──
-function getObjectLabel(obj) {
-  // Priority: name > assembly > type/ifcClass > fallback
-  let label = obj.name || "";
-  // If name is generic ("Object 123"), try better alternatives
-  if (!label || /^Object \d+$/.test(label)) {
-    if (obj.assembly) label = obj.assembly;
-    else if (obj.type) label = obj.type;
-    else if (obj.ifcClass) label = obj.ifcClass;
-    else label = `Object ${obj.id}`;
+// ── Build a descriptive display name for tree items ──
+function getObjectDisplayName(obj) {
+  let name = obj.name || "";
+  if (!name || /^Object \d+$/.test(name)) {
+    if (obj.assembly) name = obj.assembly;
+    else if (obj.type) name = obj.type;
+    else if (obj.ifcClass) name = obj.ifcClass;
+    else name = `Object ${obj.id}`;
   }
-  return label;
+  return name;
+}
+
+// ── Build a rich tooltip with all available info ──
+function buildTooltip(obj) {
+  const parts = [];
+  if (obj.name) parts.push(`Tên: ${obj.name}`);
+  if (obj.profile) parts.push(`Profile: ${obj.profile}`);
+  if (obj.type) parts.push(`Type: ${obj.type}`);
+  if (obj.ifcClass) parts.push(`IFC Class: ${obj.ifcClass}`);
+  if (obj.assembly) parts.push(`Assembly: ${obj.assembly}`);
+  if (obj.material) parts.push(`Vật liệu: ${obj.material}`);
+  return parts.join(' | ') || `Object ${obj.id}`;
+}
+
+// ── Build a label combining name + profile + type for 3D labels ──
+function getObjectLabel(obj) {
+  const parts = [];
+  // Name (skip generic)
+  const name = obj.name || "";
+  if (name && !/^Object \d+$/.test(name)) parts.push(name);
+  // Profile
+  if (obj.profile) parts.push(obj.profile);
+  // Type (if different from name)
+  if (obj.type && obj.type !== name) parts.push(obj.type);
+  // IFC Class as last resort
+  if (parts.length === 0 && obj.ifcClass) parts.push(obj.ifcClass);
+  if (parts.length === 0) parts.push(`Object ${obj.id}`);
+  return parts.join(' — ');
+}
+
+// ── Handle TC Viewer selection → sync tree checkboxes ──
+function handleViewerSelectionChanged(data) {
+  if (!data || !allObjects || allObjects.length === 0) return;
+
+  try {
+    // data can be: { modelObjectIds: [{ modelId, objectRuntimeIds: number[] }] }
+    const modelObjIds = data.modelObjectIds || data || [];
+    if (!Array.isArray(modelObjIds)) return;
+
+    // Build set of selected uids from viewer
+    const viewerSelectedUids = new Set();
+    for (const mo of modelObjIds) {
+      const modelId = mo.modelId;
+      const ids = mo.objectRuntimeIds || mo.entityIds || [];
+      for (const id of ids) {
+        viewerSelectedUids.add(`${modelId}:${id}`);
+      }
+    }
+
+    // If viewer sends empty selection, don't clear panel — just return
+    if (viewerSelectedUids.size === 0) return;
+
+    // Add viewer selections to panel selections
+    for (const uid of viewerSelectedUids) {
+      selectedIds.add(uid);
+    }
+
+    // Update tree UI
+    const treeItems = document.querySelectorAll(".tree-item");
+    for (const el of treeItems) {
+      const uid = el.dataset.uid;
+      const isSelected = selectedIds.has(uid);
+      el.classList.toggle("selected", isSelected);
+      const cb = el.querySelector(".tree-item-checkbox");
+      if (cb) cb.checked = isSelected;
+    }
+
+    updateSummary();
+    notifySelectionChanged();
+    if (highlightActive) autoHighlightSelected();
+
+    console.log(`[ObjectExplorer] Synced ${viewerSelectedUids.size} objects from TC viewer`);
+  } catch (e) {
+    console.warn("[ObjectExplorer] Viewer selection sync error:", e);
+  }
 }
 
 // ── Create SVG label as data URL ──
