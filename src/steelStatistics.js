@@ -173,6 +173,7 @@ function getGroupKey(obj, groupBy) {
     case "assemblyPosCode": return obj.assemblyPosCode || "(Không xác định)";
     case "name": return obj.name;
     case "group": return obj.group;
+    case "objectType": return obj.type || obj.ifcClass || "(Không xác định)";
     case "material": return obj.material;
     default: return obj.assemblyDisplayName || obj.assembly;
   }

@@ -872,69 +872,52 @@ function toggleSelection(uid, el) {
   syncSelectionToViewer();
 }
 
-// ── Select Assembly — select all objects in the SAME TREE GROUP as the first selected object ──
-// Uses the rendered tree DOM to find the group, which is always correct since grouping already works
+// ── Select Assembly — ALWAYS selects by ASSEMBLY_POS regardless of current grouping ──
 function selectAssembly() {
   if (selectedIds.size === 0) return;
 
   const firstUid = selectedIds.values().next().value;
-  console.log("[SelectAssembly] Starting with uid:", firstUid);
 
-  // Strategy 1: DOM-based — find the tree-group containing this item
-  const selectedEl = document.querySelector(`.tree-item[data-uid="${firstUid}"]`);
-  if (selectedEl) {
-    const groupEl = selectedEl.closest(".tree-group");
-    if (groupEl) {
-      const groupName = groupEl.dataset.group || "unknown";
-      console.log(`[SelectAssembly] Found DOM group: "${groupName}"`);
-
-      // Select all items in this group
-      const groupItems = groupEl.querySelectorAll(".tree-item");
-      let count = 0;
-      for (const item of groupItems) {
-        const uid = item.dataset.uid;
-        if (uid) {
-          selectedIds.add(uid);
-          item.classList.add("selected");
-          const cb = item.querySelector(".tree-item-checkbox");
-          if (cb) cb.checked = true;
-          count++;
-        }
-      }
-      console.log(`[SelectAssembly] Selected ${count} objects in group "${groupName}"`);
-
-      updateGroupCheckboxStates();
-      updateSummary();
-      notifySelectionChanged();
-      applyHighlightColors();
-      syncSelectionToViewer();
-      return;
-    }
-  }
-
-  // Strategy 2: Data-based fallback — match by current groupBy key
-  console.log("[SelectAssembly] DOM strategy failed, trying data fallback");
+  // Find the object data for the selected item
   const firstObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
-  if (!firstObj) return;
+  if (!firstObj) {
+    console.log("[SelectAssembly] Object not found for uid:", firstUid);
+    return;
+  }
 
-  const groupBy = document.getElementById("group-by-select").value;
-  const targetKey = getGroupKey(firstObj, groupBy);
-  console.log(`[SelectAssembly] Fallback: groupBy="${groupBy}", key="${targetKey}"`);
+  // ALWAYS use assemblyPos for matching
+  const targetPos = firstObj.assemblyPos;
+  if (!targetPos) {
+    console.log("[SelectAssembly] Object has no ASSEMBLY_POS:", firstObj.name);
+    return;
+  }
 
+  console.log(`[SelectAssembly] Selecting all objects with ASSEMBLY_POS = "${targetPos}"`);
+
+  // Find all objects with the same ASSEMBLY_POS and add to selection
+  const matchedUids = new Set();
   for (const obj of allObjects) {
-    if (getGroupKey(obj, groupBy) === targetKey) {
-      selectedIds.add(`${obj.modelId}:${obj.id}`);
+    if (obj.assemblyPos === targetPos) {
+      matchedUids.add(`${obj.modelId}:${obj.id}`);
     }
   }
 
-  // Update tree UI
+  // Add all matched UIDs to selection
+  for (const uid of matchedUids) {
+    selectedIds.add(uid);
+  }
+
+  console.log(`[SelectAssembly] Selected ${matchedUids.size} objects`);
+
+  // Update ALL tree items (both matched and unmatched)
   const treeItems = document.querySelectorAll(".tree-item");
   for (const el of treeItems) {
     const uid = el.dataset.uid;
-    const isSelected = selectedIds.has(uid);
-    el.classList.toggle("selected", isSelected);
-    const cb = el.querySelector(".tree-item-checkbox");
-    if (cb) cb.checked = isSelected;
+    if (selectedIds.has(uid)) {
+      el.classList.add("selected");
+      const cb = el.querySelector(".tree-item-checkbox");
+      if (cb) cb.checked = true;
+    }
   }
 
   updateGroupCheckboxStates();
@@ -967,6 +950,8 @@ function getGroupKey(obj, groupBy) {
       return obj.group;
     case "type":
       return obj.type;
+    case "objectType":
+      return obj.type || obj.ifcClass || "(Không xác định)";
     case "material":
       return obj.material;
     default:
