@@ -169,6 +169,9 @@ function exportExcel(selectedOnly) {
 function getGroupKey(obj, groupBy) {
   switch (groupBy) {
     case "assembly": return obj.assemblyDisplayName || obj.assembly;
+    case "assemblyName": return obj.assemblyName || obj.assembly || "(Không xác định)";
+    case "assemblyPos": return obj.assemblyPos || "(Không xác định)";
+    case "assemblyPosCode": return obj.assemblyPosCode || "(Không xác định)";
     case "name": return obj.name;
     case "group": return obj.group;
     case "material": return obj.material;

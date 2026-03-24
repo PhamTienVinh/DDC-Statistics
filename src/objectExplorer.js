@@ -237,8 +237,8 @@ async function scanObjects() {
       `[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects (removed ${beforeFilter - allObjects.length} non-3D)`,
     );
 
-    // Assign assembly instances via IFC hierarchy (IfcElementAssembly)
-    await assignAssemblyInstances();
+    // Assign assembly instances via Tekla properties (ASSEMBLY_POS)
+    assignAssemblyInstances();
 
     // Build display names for assembly groups  
     buildAssemblyDisplayNames();
@@ -296,190 +296,37 @@ async function fetchAndParseProperties(modelId, objectIds) {
   }
 }
 
-// ── Assembly Instance Assignment via IFC Hierarchy ──
-// Finds IfcElementAssembly containers and maps their children to unique instances
-async function assignAssemblyInstances() {
-  // Step 1: Scan ALL raw objects (before filter) to find IfcElementAssembly containers
-  // We need to re-check the unfiltered data, so let's find assembly containers
-  // from the objects that DO exist in allObjects + any that might have been filtered
-  const asmContainers = [];
-
-  // Check existing objects for IfcElementAssembly class
+// ── Assembly Instance Assignment by Tekla Properties ──
+// Uses ASSEMBLY_POS as unique instance identifier (unique per physical assembly in Tekla)
+function assignAssemblyInstances() {
   for (const obj of allObjects) {
-    const cls = (obj.ifcClass || "").toLowerCase();
-    if (cls === "ifcelementassembly" || cls.includes("elementassembly")) {
-      asmContainers.push(obj);
-    }
-  }
-
-  // Also try to find assembly containers from getObjects (they may have been filtered)
-  // by looking for objects with ifcClass containing "assembly" in the viewer
-  try {
-    const modelObjectsList = await viewerRef.getObjects();
-    if (modelObjectsList) {
-      for (const modelObjs of modelObjectsList) {
-        const objects = modelObjs.objects || [];
-        for (const obj of objects) {
-          const cls = (obj.class || "").toLowerCase();
-          if (cls === "ifcelementassembly" || cls.includes("elementassembly")) {
-            // This is an assembly container — may not be in allObjects (filtered out)
-            const exists = asmContainers.some(a => a.modelId === modelObjs.modelId && a.id === obj.id);
-            if (!exists) {
-              asmContainers.push({
-                id: obj.id,
-                modelId: modelObjs.modelId,
-                name: obj.product?.name || "",
-                assembly: obj.product?.name || "",
-                ifcClass: obj.class,
-              });
-            }
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.warn("[ObjectExplorer] Could not re-scan for IfcElementAssembly:", e);
-  }
-
-  console.log(`[ObjectExplorer] Found ${asmContainers.length} IfcElementAssembly containers`);
-
-  if (asmContainers.length === 0) {
-    // No IFC assemblies — use name-based fallback
-    assignAssemblyInstancesFallback();
-    return;
-  }
-
-  // Step 2: For each assembly container, get children via hierarchy API
-  const objectToInstance = new Map(); // "modelId:objId" → instanceId
-  const instanceNames = new Map(); // instanceId → assembly name
-
-  for (const asm of asmContainers) {
-    const instanceId = `${asm.modelId}:asm_${asm.id}`;
-    const asmName = asm.name || asm.assembly || `Assembly ${asm.id}`;
-    instanceNames.set(instanceId, asmName);
-
-    // Mark the container itself
-    objectToInstance.set(`${asm.modelId}:${asm.id}`, instanceId);
-
-    try {
-      // Get direct children (depth=1) — parts of this assembly
-      const children = await viewerRef.getHierarchyChildren(asm.modelId, [asm.id], 1, false);
-      if (children && children.length > 0) {
-        for (const child of children) {
-          objectToInstance.set(`${asm.modelId}:${child.id}`, instanceId);
-        }
-        console.log(`[ObjectExplorer] Assembly ${asmName} (${asm.id}): ${children.length} children`);
-      }
-    } catch (e) {
-      console.warn(`[ObjectExplorer] getHierarchyChildren failed for ${asm.id}:`, e);
-      // Fallback: try depth=2 for nested hierarchies
-      try {
-        const children = await viewerRef.getHierarchyChildren(asm.modelId, [asm.id], 2, false);
-        if (children) {
-          const flatChildren = flattenHierarchy(children);
-          for (const childId of flatChildren) {
-            objectToInstance.set(`${asm.modelId}:${childId}`, instanceId);
-          }
-        }
-      } catch (e2) { /* ignore */ }
-    }
-  }
-
-  // Step 3: Apply instance IDs to allObjects
-  let assignedCount = 0;
-  for (const obj of allObjects) {
-    const key = `${obj.modelId}:${obj.id}`;
-    const instanceId = objectToInstance.get(key);
-    if (instanceId) {
-      obj.assemblyInstanceId = instanceId;
-      // Inherit assembly name from parent if object doesn't have one
-      if (!obj.assembly && instanceNames.has(instanceId)) {
-        obj.assembly = instanceNames.get(instanceId);
-      }
-      assignedCount++;
-    }
-  }
-
-  console.log(`[ObjectExplorer] Assigned ${assignedCount} objects to ${instanceNames.size} assembly instances via hierarchy`);
-
-  // Step 4: Fallback for objects not assigned by hierarchy
-  assignAssemblyInstancesFallback(true);
-}
-
-// Flatten nested hierarchy children into a list of IDs
-function flattenHierarchy(nodes) {
-  const ids = [];
-  for (const node of nodes) {
-    ids.push(node.id);
-    if (node.children && node.children.length > 0) {
-      ids.push(...flattenHierarchy(node.children));
-    }
-  }
-  return ids;
-}
-
-// Fallback: assign assembly instance IDs by name for objects not yet assigned
-function assignAssemblyInstancesFallback(onlyMissing = false) {
-  let instanceCounter = 0;
-  const nameToInstance = new Map(); // "modelId:assemblyName" → instanceId
-
-  for (const obj of allObjects) {
-    if (onlyMissing && obj.assemblyInstanceId) continue;
-
-    if (obj.assembly) {
-      const nameKey = `${obj.modelId}:${obj.assembly}`;
-      if (!nameToInstance.has(nameKey)) {
-        instanceCounter++;
-        nameToInstance.set(nameKey, `${obj.modelId}:name_${instanceCounter}`);
-      }
-      obj.assemblyInstanceId = nameToInstance.get(nameKey);
+    // Use assemblyPos as unique instance key (best for Tekla)
+    if (obj.assemblyPos) {
+      obj.assemblyInstanceId = `${obj.modelId}:pos_${obj.assemblyPos}`;
+    } else if (obj.assembly) {
+      // Fallback: use assembly name for non-Tekla objects
+      obj.assemblyInstanceId = `${obj.modelId}:name_${obj.assembly}`;
     } else {
       obj.assemblyInstanceId = "";
     }
   }
 
-  if (!onlyMissing) {
-    console.log(`[ObjectExplorer] Fallback: assigned ${instanceCounter} assembly instances by name`);
-  }
+  const uniqueInstances = new Set(allObjects.filter(o => o.assemblyInstanceId).map(o => o.assemblyInstanceId));
+  console.log(`[ObjectExplorer] Assigned ${uniqueInstances.size} assembly instances (by ASSEMBLY_POS)`);
 }
 
 // Build human-readable display names for assembly groups
-// If multiple instances share a name, add (#N) suffix
 function buildAssemblyDisplayNames() {
-  // Count instances per assembly name
-  const nameInstances = new Map(); // assemblyName → Set of instanceIds
   for (const obj of allObjects) {
-    if (!obj.assemblyInstanceId || !obj.assembly) continue;
-    if (!nameInstances.has(obj.assembly)) nameInstances.set(obj.assembly, new Set());
-    nameInstances.get(obj.assembly).add(obj.assemblyInstanceId);
-  }
-
-  // Build display names
-  const instanceDisplayName = new Map(); // instanceId → display name
-  for (const [name, instances] of nameInstances) {
-    if (instances.size > 1) {
-      let i = 1;
-      for (const instanceId of instances) {
-        instanceDisplayName.set(instanceId, `${name} (#${i})`);
-        i++;
-      }
+    if (obj.assemblyPos) {
+      // For Tekla: show ASSEMBLY_POS as the display name
+      obj.assemblyDisplayName = obj.assemblyPos;
+    } else if (obj.assembly) {
+      obj.assemblyDisplayName = obj.assembly;
     } else {
-      for (const instanceId of instances) {
-        instanceDisplayName.set(instanceId, name);
-      }
+      obj.assemblyDisplayName = "";
     }
   }
-
-  // Apply to objects
-  for (const obj of allObjects) {
-    if (obj.assemblyInstanceId) {
-      obj.assemblyDisplayName = instanceDisplayName.get(obj.assemblyInstanceId) || obj.assembly;
-    } else {
-      obj.assemblyDisplayName = obj.assembly || "";
-    }
-  }
-
-  console.log(`[ObjectExplorer] Built display names for ${instanceDisplayName.size} assembly instances`);
 }
 // ObjectProperties: { id: number, class?: string, product?: Product, properties?: PropertySet[] }
 // Product: { name?: string, description?: string, objectType?: string }
@@ -491,6 +338,9 @@ function parseObjectProperties(props, modelId) {
     modelId,
     name: "",
     assembly: "",
+    assemblyName: "",     // ASSEMBLY_NAME from Tekla
+    assemblyPos: "",      // ASSEMBLY_POS from Tekla (unique per assembly instance)
+    assemblyPosCode: "",  // ASSEMBLY_POSITION_CODE from Tekla
     group: "",
     type: "",
     material: "",
@@ -542,36 +392,43 @@ function parseObjectProperties(props, modelId) {
         result.name = String(propValue || "");
       }
 
-      // Assembly — priority-based: higher priority overwrites lower
-      // Priority 3 (highest): Tekla-specific assembly mark
-      const asmPriority3 = [
-        "assembly mark", "assemblymark", "assembly_mark",
-        "tekla assembly mark", "tekla_assembly",
-        "mainmark", "main mark"
-      ];
-      // Priority 2: Assembly position/name
-      const asmPriority2 = [
-        "assembly_pos", "assemblypos", "assembly pos",
-        "assembly_name", "assemblyname", "assembly name"
-      ];
-      // Priority 1 (lowest): Generic assembly / other
-      const asmPriority1 = [
-        "assembly", "assemblycode", "assembly code",
-        "part_pos", "partpos", "part pos",
-        "preliminary mark", "preliminarymark"
-      ];
-
+      // Assembly — capture Tekla-specific properties separately
       const asmVal = String(propValue || "").trim();
       if (asmVal) {
-        if (asmPriority3.includes(propName)) {
-          result.assembly = asmVal;
-          result._asmPriority = 3;
-        } else if (asmPriority2.includes(propName) && (result._asmPriority || 0) < 2) {
-          result.assembly = asmVal;
-          result._asmPriority = 2;
-        } else if (asmPriority1.includes(propName) && (result._asmPriority || 0) < 1) {
-          result.assembly = asmVal;
-          result._asmPriority = 1;
+        // ASSEMBLY_NAME
+        if (
+          propName === "assembly_name" || propName === "assemblyname" ||
+          propName === "assembly name"
+        ) {
+          result.assemblyName = asmVal;
+        }
+        // ASSEMBLY_POS (unique per assembly instance in Tekla)
+        if (
+          propName === "assembly_pos" || propName === "assemblypos" ||
+          propName === "assembly pos" || propName === "assembly position" ||
+          propName === "assembly_position"
+        ) {
+          result.assemblyPos = asmVal;
+        }
+        // ASSEMBLY_POSITION_CODE
+        if (
+          propName === "assembly_position_code" || propName === "assemblypositioncode" ||
+          propName === "assembly position code"
+        ) {
+          result.assemblyPosCode = asmVal;
+        }
+        // Generic assembly field (fallback)
+        if (
+          propName === "assembly" || propName === "assemblycode" ||
+          propName === "assembly code" || propName === "assembly mark" ||
+          propName === "assemblymark" || propName === "assembly_mark" ||
+          propName === "tekla assembly mark" || propName === "tekla_assembly" ||
+          propName === "mainmark" || propName === "main mark" ||
+          propName === "part_pos" || propName === "partpos" ||
+          propName === "part pos" || propName === "preliminary mark" ||
+          propName === "preliminarymark"
+        ) {
+          if (!result.assembly) result.assembly = asmVal;
         }
       }
 
@@ -702,9 +559,6 @@ function parseObjectProperties(props, modelId) {
       result.assembly = desc;
     }
   }
-
-  // Clean up internal priority tracker
-  delete result._asmPriority;
 
   // Fallback name
   if (!result.name) result.name = `Object ${props.id}`;
@@ -999,6 +853,12 @@ function getGroupKey(obj, groupBy) {
   switch (groupBy) {
     case "assembly":
       return obj.assemblyDisplayName || obj.assembly;
+    case "assemblyName":
+      return obj.assemblyName || obj.assembly || "(Không xác định)";
+    case "assemblyPos":
+      return obj.assemblyPos || "(Không xác định)";
+    case "assemblyPosCode":
+      return obj.assemblyPosCode || "(Không xác định)";
     case "name":
       return obj.name;
     case "group":
