@@ -884,21 +884,40 @@ function selectAssembly() {
     return;
   }
 
-  // Use ASSEMBLY_POS as the primary matching key
-  const targetPos = firstObj.assemblyPos;
-  if (!targetPos) {
-    console.log("[ObjectExplorer] Selected object has no ASSEMBLY_POS");
+  // Determine matching key with fallback chain: assemblyPos → assemblyName → assemblyInstanceId → assembly
+  let matchKey = "";
+  let matchField = "";
+  if (firstObj.assemblyPos) {
+    matchKey = firstObj.assemblyPos;
+    matchField = "assemblyPos";
+  } else if (firstObj.assemblyName) {
+    matchKey = firstObj.assemblyName;
+    matchField = "assemblyName";
+  } else if (firstObj.assemblyInstanceId) {
+    matchKey = firstObj.assemblyInstanceId;
+    matchField = "assemblyInstanceId";
+  } else if (firstObj.assembly) {
+    matchKey = firstObj.assembly;
+    matchField = "assembly";
+  }
+
+  if (!matchKey) {
+    console.log("[ObjectExplorer] Selected object has no assembly info");
     return;
   }
 
-  console.log(`[ObjectExplorer] Selecting all objects with ASSEMBLY_POS: ${targetPos}`);
+  console.log(`[ObjectExplorer] Selecting assembly by ${matchField}: "${matchKey}"`);
 
-  // Select all objects with the same ASSEMBLY_POS
+  // Select all objects matching the same key
+  let count = 0;
   for (const obj of allObjects) {
-    if (obj.assemblyPos === targetPos) {
+    const objValue = obj[matchField];
+    if (objValue === matchKey) {
       selectedIds.add(`${obj.modelId}:${obj.id}`);
+      count++;
     }
   }
+  console.log(`[ObjectExplorer] Selected ${count} objects in assembly`);
 
   // Update tree UI
   const treeItems = document.querySelectorAll(".tree-item");
@@ -1296,29 +1315,39 @@ function updateSummary() {
   document.getElementById("selected-objects-count").textContent =
     `${selectedIds.size} đã chọn`;
 
-  // Calculate stats for selected objects
+  // Calculate and display stats for selected objects
   const selStatsEl = document.getElementById("selected-stats");
-  if (selStatsEl) {
-    if (selectedIds.size > 0) {
-      let totalVolume = 0, totalWeight = 0, totalArea = 0;
-      for (const obj of allObjects) {
-        const uid = `${obj.modelId}:${obj.id}`;
-        if (selectedIds.has(uid)) {
-          totalVolume += obj.volume || 0;
-          totalWeight += obj.weight || 0;
-          totalArea += obj.area || 0;
-        }
+  const statsDivider = document.getElementById("stats-divider");
+
+  if (selectedIds.size > 0) {
+    let totalVolume = 0, totalWeight = 0, totalArea = 0;
+    for (const obj of allObjects) {
+      const uid = `${obj.modelId}:${obj.id}`;
+      if (selectedIds.has(uid)) {
+        totalVolume += obj.volume || 0;
+        totalWeight += obj.weight || 0;
+        totalArea += obj.area || 0;
       }
-      const parts = [];
-      if (totalVolume > 0) parts.push(`V: ${totalVolume.toFixed(4)} m³`);
-      if (totalWeight > 0) parts.push(`W: ${totalWeight.toFixed(1)} kg`);
-      if (totalArea > 0) parts.push(`A: ${totalArea.toFixed(2)} m²`);
-      selStatsEl.textContent = parts.length > 0 ? parts.join(" | ") : "";
-      selStatsEl.style.display = parts.length > 0 ? "inline" : "none";
-    } else {
+    }
+
+    // Build stats text - always show all fields
+    const parts = [];
+    parts.push(`V: ${totalVolume.toFixed(4)} m³`);
+    parts.push(`W: ${totalWeight.toFixed(1)} kg`);
+    parts.push(`A: ${totalArea.toFixed(2)} m²`);
+    const statsText = parts.join(" | ");
+
+    if (selStatsEl) {
+      selStatsEl.textContent = statsText;
+      selStatsEl.style.display = "inline";
+    }
+    if (statsDivider) statsDivider.style.display = "inline";
+  } else {
+    if (selStatsEl) {
       selStatsEl.textContent = "";
       selStatsEl.style.display = "none";
     }
+    if (statsDivider) statsDivider.style.display = "none";
   }
 }
 
