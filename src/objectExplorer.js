@@ -206,6 +206,28 @@ async function scanObjects() {
 
     console.log(`[ObjectExplorer] Raw scanned ${allObjects.length} objects`);
 
+    // Deduplicate: keep only unique modelId:objectId (prefer the one with more data)
+    const seen = new Map();
+    for (const obj of allObjects) {
+      const key = `${obj.modelId}:${obj.id}`;
+      const existing = seen.get(key);
+      if (!existing) {
+        seen.set(key, obj);
+      } else {
+        // Keep the entry with more physical data
+        const existingScore = (existing.volume > 0 ? 1 : 0) + (existing.weight > 0 ? 1 : 0) + (existing.area > 0 ? 1 : 0) + (existing.assembly ? 1 : 0) + (existing.profile ? 1 : 0);
+        const newScore = (obj.volume > 0 ? 1 : 0) + (obj.weight > 0 ? 1 : 0) + (obj.area > 0 ? 1 : 0) + (obj.assembly ? 1 : 0) + (obj.profile ? 1 : 0);
+        if (newScore > existingScore) {
+          seen.set(key, obj);
+        }
+      }
+    }
+    const beforeDedup = allObjects.length;
+    allObjects = Array.from(seen.values());
+    if (beforeDedup !== allObjects.length) {
+      console.log(`[ObjectExplorer] Deduplicated: ${beforeDedup} → ${allObjects.length} objects (removed ${beforeDedup - allObjects.length} duplicates)`);
+    }
+
     // Filter: exclude objects with no physical data (volume, weight, area all = 0)
     const beforeFilter = allObjects.length;
     allObjects = allObjects.filter(
