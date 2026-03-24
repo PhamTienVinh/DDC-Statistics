@@ -198,13 +198,50 @@ async function scanObjects() {
     const beforeFilter = allObjects.length;
     allObjects = allObjects.filter(obj => {
       const cls = obj.ifcClass || '';
+      const clsLower = cls.toLowerCase();
+      const nameLower = (obj.name || '').toLowerCase();
+      const typeLower = (obj.type || '').toLowerCase();
 
-      // If IFC class is known → only keep 3D geometry classes
-      if (cls) {
-        return IFC_3D_CLASSES.has(cls);
-      }
+      // 1) Exclude by IFC class name (case-insensitive) — non-geometry classes
+      const excludedClassKeywords = [
+        'ifcsite', 'ifcproject', 'ifcbuilding', 'ifcbuildingstorey',
+        'ifcspace', 'ifczone', 'ifcgroup', 'ifcsystem',
+        'ifcgrid', 'ifcgridaxis', 'ifcannotation',
+        'ifcrelation', 'ifcrel', 'ifcownerhist', 'ifcapplication',
+        'ifcpropertyset', 'ifcmaterial', 'ifcunit',
+        'ifcgeometric', 'ifccartesian', 'ifcdirection', 'ifcaxis',
+        'ifclocalplacement', 'ifcorganization',
+      ];
+      if (clsLower && excludedClassKeywords.some(k => clsLower.startsWith(k))) return false;
 
-      // If no IFC class → keep only if it has physical data (volume, weight, or area)
+      // 2) Exclude by name — Revit non-3D items that may lack proper IFC class
+      const excludedNameKeywords = [
+        'ifcsite', 'ifcbuilding', 'ifcproject', 'ifcbuildingstorey',
+        'model group', 'modelgroup', 'model line', 'model text',
+        'level ', 'grid ', 'grid:', 'datum', 'reference plane',
+        'scope box', 'section box', 'elevation:', 'section:',
+        'detail line', 'drafting view', 'schedule',
+        'callout', 'matchline', 'guide grid',
+      ];
+      if (nameLower && excludedNameKeywords.some(k => nameLower.startsWith(k))) return false;
+      // Also exclude exact matches
+      if (['assembly', 'model group', 'ifcsite', 'ifcbuilding', 'ifcproject'].includes(nameLower)) return false;
+
+      // 3) Exclude by type field
+      const excludedTypeKeywords = [
+        'ifcsite', 'ifcbuilding', 'ifcproject', 'ifcbuildingstorey',
+        'ifcspace', 'ifcgroup', 'ifcgrid', 'ifcannotation',
+        'model group', 'modelgroup',
+      ];
+      if (typeLower && excludedTypeKeywords.some(k => typeLower.startsWith(k))) return false;
+
+      // 4) If IFC class exists and is in our 3D whitelist → keep
+      if (cls && IFC_3D_CLASSES.has(cls)) return true;
+
+      // 5) If IFC class exists but not in whitelist → exclude
+      if (cls && !IFC_3D_CLASSES.has(cls)) return false;
+
+      // 6) No IFC class → keep only if it has physical data
       return (obj.volume > 0 || obj.weight > 0 || obj.area > 0);
     });
     console.log(`[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} 3D objects`);
