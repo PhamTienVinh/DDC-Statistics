@@ -208,7 +208,6 @@ function formatArea(a) {
 }
 
 function formatLength(l) {
-  if (l >= 1000) return (l / 1000).toFixed(3) + " km";
   return l.toFixed(3) + " m";
 }
 

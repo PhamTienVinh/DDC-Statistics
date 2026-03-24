@@ -491,35 +491,6 @@ function getGroupKey(obj, groupBy) {
 }
 
 // ── Highlight ──
-// Sync panel selection state to TC viewer (without triggering viewer event loop)
-async function syncSelectionToViewer() {
-  if (selectedIds.size === 0) {
-    try {
-      isSyncingFromViewer = true;
-      await viewerRef.setSelection({ modelObjectIds: [] }, "set");
-    } catch (e) { /* ignore */ }
-    finally { isSyncingFromViewer = false; }
-    return;
-  }
-
-  const modelMap = buildModelMap();
-  try {
-    isSyncingFromViewer = true;
-    await viewerRef.setSelection(
-      {
-        modelObjectIds: Object.entries(modelMap).map(([modelId, ids]) => ({
-          modelId,
-          objectRuntimeIds: ids,
-        })),
-      },
-      "set"
-    );
-  } catch (e) {
-    console.warn("[ObjectExplorer] setSelection failed:", e);
-  } finally {
-    isSyncingFromViewer = false;
-  }
-}
 
 
 // Apply colored highlight overlay to all selected objects (auto-highlight)
@@ -548,6 +519,36 @@ async function applyHighlightColors() {
     console.log(`[ObjectExplorer] Auto-highlighted ${selectedIds.size} objects`);
   } catch (e) {
     console.error("[ObjectExplorer] Highlight color failed:", e);
+  }
+}
+
+// Sync panel selection to TC viewer (one-way: panel → viewer)
+async function syncSelectionToViewer() {
+  if (selectedIds.size === 0) {
+    try {
+      isSyncingFromViewer = true;
+      await viewerRef.setSelection({ modelObjectIds: [] }, "set");
+    } catch (e) { /* ignore */ }
+    finally { isSyncingFromViewer = false; }
+    return;
+  }
+
+  const modelMap = buildModelMap();
+  try {
+    isSyncingFromViewer = true;
+    await viewerRef.setSelection(
+      {
+        modelObjectIds: Object.entries(modelMap).map(([modelId, ids]) => ({
+          modelId,
+          objectRuntimeIds: ids,
+        })),
+      },
+      "set"
+    );
+  } catch (e) {
+    console.warn("[ObjectExplorer] setSelection failed:", e);
+  } finally {
+    isSyncingFromViewer = false;
   }
 }
 
@@ -655,30 +656,34 @@ function getObjectLabel(obj) {
 }
 
 // ── Handle TC Viewer selection → sync tree checkboxes ──
+// This is called when user selects objects via single-click or area-select in TC 3D viewer.
+// We sync the TC viewer's selection to our panel in real-time.
 function handleViewerSelectionChanged(data) {
-  if (!data || !allObjects || allObjects.length === 0) return;
+  if (!allObjects || allObjects.length === 0) return;
 
   try {
     // data can be various formats depending on TC API version:
     // { modelObjectIds: [{ modelId, objectRuntimeIds: number[] }] }
     // or just [{ modelId, objectRuntimeIds: number[] }]
-    let modelObjIds = data.modelObjectIds || data;
-    if (!Array.isArray(modelObjIds)) {
-      if (modelObjIds && typeof modelObjIds === 'object') {
-        modelObjIds = [modelObjIds];
-      } else {
-        return;
-      }
+    let modelObjIds = null;
+    if (data && data.modelObjectIds) {
+      modelObjIds = data.modelObjectIds;
+    } else if (Array.isArray(data)) {
+      modelObjIds = data;
+    } else if (data && typeof data === 'object') {
+      modelObjIds = [data];
     }
 
     // Build set of selected uids from viewer
     const viewerSelectedUids = new Set();
-    for (const mo of modelObjIds) {
-      if (!mo) continue;
-      const modelId = mo.modelId;
-      const ids = mo.objectRuntimeIds || mo.entityIds || mo.ids || [];
-      for (const id of ids) {
-        viewerSelectedUids.add(`${modelId}:${id}`);
+    if (modelObjIds && Array.isArray(modelObjIds)) {
+      for (const mo of modelObjIds) {
+        if (!mo) continue;
+        const modelId = mo.modelId;
+        const ids = mo.objectRuntimeIds || mo.entityIds || mo.ids || [];
+        for (const id of ids) {
+          viewerSelectedUids.add(`${modelId}:${id}`);
+        }
       }
     }
 
@@ -696,6 +701,14 @@ function handleViewerSelectionChanged(data) {
       el.classList.toggle("selected", isSelected);
       const cb = el.querySelector(".tree-item-checkbox");
       if (cb) cb.checked = isSelected;
+    }
+
+    // Scroll first selected item into view
+    if (viewerSelectedUids.size > 0) {
+      const firstSelected = document.querySelector(".tree-item.selected");
+      if (firstSelected) {
+        firstSelected.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
     }
 
     updateSummary();
