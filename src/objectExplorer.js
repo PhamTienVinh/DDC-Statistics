@@ -939,90 +939,117 @@ function toggleSelection(uid, el) {
   syncSelectionToViewer();
 }
 
-// ── Select Assembly — select all objects with same ASSEMBLY_POS ──
-function selectAssembly() {
-  // Debug Step 1: Check if anything is selected
-  if (selectedIds.size === 0) {
-    alert("[Select Assembly] Chưa chọn object nào!");
-    return;
-  }
+// ── Select Assembly — uses viewer API to get assembly info at runtime ──
+async function selectAssembly() {
+  if (selectedIds.size === 0 || !viewerRef) return;
 
   const firstUid = selectedIds.values().next().value;
-  
-  // Debug Step 2: Show what UID looks like
-  const debugInfo = [];
-  debugInfo.push(`UID: ${firstUid}`);
-  debugInfo.push(`selectedIds count: ${selectedIds.size}`);
-  debugInfo.push(`allObjects count: ${allObjects.length}`);
-  debugInfo.push(`assemblyMap count: ${assemblyMembershipMap.size}`);
+  const idx = firstUid.indexOf(":");
+  if (idx <= 0) return;
 
-  // Try to find the object in allObjects
-  let matchObj = null;
-  
-  // Method 1: exact UID match
-  matchObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
-  debugInfo.push(`Exact match: ${matchObj ? "YES" : "NO"}`);
+  const modelId = firstUid.substring(0, idx);
+  const objectId = parseInt(firstUid.substring(idx + 1));
+  if (isNaN(objectId)) return;
 
-  // Method 2: numeric ID match
-  if (!matchObj) {
-    const idx = firstUid.indexOf(":");
-    if (idx > 0) {
-      const modelId = firstUid.substring(0, idx);
-      const objectId = parseInt(firstUid.substring(idx + 1));
-      debugInfo.push(`Parsed: modelId=${modelId}, objectId=${objectId}`);
-      
-      // Try numeric match
-      matchObj = allObjects.find(o => o.modelId === modelId && o.id === objectId);
-      debugInfo.push(`Numeric match: ${matchObj ? "YES" : "NO"}`);
-      
-      // Try string match
-      if (!matchObj) {
-        matchObj = allObjects.find(o => o.modelId === modelId && String(o.id) === String(objectId));
-        debugInfo.push(`String match: ${matchObj ? "YES" : "NO"}`);
+  try {
+    // Step 1: Get fresh properties of the selected object from viewer API
+    const propsArray = await viewerRef.getObjectProperties(modelId, [objectId]);
+    if (!propsArray || propsArray.length === 0) {
+      console.log("[SelectAssembly] No properties returned for object", objectId);
+      return;
+    }
+
+    const props = propsArray[0];
+    console.log("[SelectAssembly] Object:", props.product?.name, "| ID:", objectId);
+
+    // Step 2: Find ASSEMBLY_POS in properties
+    let assemblyPosValue = "";
+    const propertySets = props.properties || [];
+    
+    for (const pSet of propertySets) {
+      for (const prop of (pSet.properties || [])) {
+        const rawName = prop.name || "";
+        const normalizedName = rawName.toLowerCase().replace(/[\s_.\\-]/g, "");
+        
+        // Match ASSEMBLY_POS specifically (NOT position_code)
+        if (
+          normalizedName === "assemblypos" ||
+          rawName === "ASSEMBLY_POS" ||
+          rawName === "ASSEMBLY.ASSEMBLY_POS" ||
+          rawName === "Assembly_Pos"
+        ) {
+          assemblyPosValue = String(prop.value || "").trim();
+          console.log(`[SelectAssembly] Found ASSEMBLY_POS: "${assemblyPosValue}" (from "${rawName}" in "${pSet.name}")`);
+          break;
+        }
       }
+      if (assemblyPosValue) break;
+    }
 
-      // Show sample allObjects IDs for comparison
-      const sampleObjs = allObjects.filter(o => o.modelId === modelId).slice(0, 3);
-      if (sampleObjs.length > 0) {
-        debugInfo.push(`Sample allObjects IDs: ${sampleObjs.map(o => `${typeof o.id}:${o.id}`).join(", ")}`);
+    if (!assemblyPosValue) {
+      console.log("[SelectAssembly] No ASSEMBLY_POS found in object properties");
+      // Log all property names for debugging
+      for (const pSet of propertySets) {
+        const names = (pSet.properties || []).map(p => p.name).join(", ");
+        console.log(`[SelectAssembly] PSet "${pSet.name}": ${names}`);
+      }
+      return;
+    }
+
+    // Step 3: Find all objects in our data with matching assemblyPos
+    let count = 0;
+    for (const obj of allObjects) {
+      if (obj.assemblyPos === assemblyPosValue) {
+        selectedIds.add(`${obj.modelId}:${obj.id}`);
+        count++;
       }
     }
-  }
 
-  if (!matchObj) {
-    alert("[Select Assembly] Object không tìm thấy trong allObjects!\n\n" + debugInfo.join("\n"));
-    return;
-  }
-
-  debugInfo.push(`Object name: ${matchObj.name}`);
-  debugInfo.push(`assemblyPos: "${matchObj.assemblyPos || ""}"`);
-  debugInfo.push(`assemblyName: "${matchObj.assemblyName || ""}"`);
-  debugInfo.push(`assembly: "${matchObj.assembly || ""}"`);
-
-  // Find assembly key to use
-  const assemblyPos = matchObj.assemblyPos;
-  if (!assemblyPos) {
-    alert("[Select Assembly] Object không có ASSEMBLY_POS!\n\n" + debugInfo.join("\n"));
-    return;
-  }
-
-  // Count how many objects share this assemblyPos
-  let count = 0;
-  for (const obj of allObjects) {
-    if (obj.assemblyPos === assemblyPos) count++;
-  }
-  debugInfo.push(`Objects with same ASSEMBLY_POS "${assemblyPos}": ${count}`);
-
-  // Select them
-  for (const obj of allObjects) {
-    if (obj.assemblyPos === assemblyPos) {
-      selectedIds.add(`${obj.modelId}:${obj.id}`);
+    // Step 4: If no matches in allObjects.assemblyPos, do a fresh property scan
+    if (count === 0) {
+      console.log("[SelectAssembly] No cached matches, scanning all objects for ASSEMBLY_POS...");
+      // Get all object IDs in this model
+      const modelObjs = allObjects.filter(o => o.modelId === modelId);
+      for (const obj of modelObjs) {
+        try {
+          const objProps = await viewerRef.getObjectProperties(modelId, [obj.id]);
+          if (!objProps || objProps.length === 0) continue;
+          
+          for (const pSet of (objProps[0].properties || [])) {
+            for (const prop of (pSet.properties || [])) {
+              const rn = prop.name || "";
+              const nn = rn.toLowerCase().replace(/[\s_.\\-]/g, "");
+              if (nn === "assemblypos" || rn === "ASSEMBLY_POS") {
+                if (String(prop.value || "").trim() === assemblyPosValue) {
+                  selectedIds.add(`${obj.modelId}:${obj.id}`);
+                  count++;
+                }
+              }
+            }
+          }
+        } catch (e) { /* skip objects with no properties */ }
+      }
     }
+
+    console.log(`[SelectAssembly] Selected ${count} objects with ASSEMBLY_POS="${assemblyPosValue}"`);
+
+    // Step 5: Update UI
+    document.querySelectorAll(".tree-item").forEach((el) => {
+      if (selectedIds.has(el.dataset.uid)) {
+        el.classList.add("selected");
+        const cb = el.querySelector(".tree-item-checkbox");
+        if (cb) cb.checked = true;
+      }
+    });
+
+    updateGroupCheckboxStates();
+    updateSummary();
+    notifySelectionChanged();
+    applyHighlightColors();
+    syncSelectionToViewer();
+  } catch (e) {
+    console.error("[SelectAssembly] Error:", e);
   }
-
-  alert("[Select Assembly] Đã chọn " + count + " objects!\n\n" + debugInfo.join("\n"));
-
-  updateTreeAndNotify();
 }
 
 function updateTreeAndNotify() {
