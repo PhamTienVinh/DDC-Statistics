@@ -923,18 +923,25 @@ function renderTree() {
   });
 
   // Bind click events with Shift+click support (select AND deselect range)
+  // Unified handler: works for both clicking the row and clicking the checkbox
   const allItems = Array.from(container.querySelectorAll(".tree-item"));
   allItems.forEach((el, index) => {
     el.addEventListener("click", (e) => {
-      if (e.target.classList.contains("tree-item-checkbox")) return;
+      const isCheckboxClick = e.target.classList.contains("tree-item-checkbox");
 
+      // ── Shift+click range selection ──
       if (e.shiftKey && lastClickedItem !== null) {
-        // Shift+click: apply same action (select or deselect) to range
         const lastIndex = allItems.indexOf(lastClickedItem);
         if (lastIndex >= 0) {
           const start = Math.min(lastIndex, index);
           const end = Math.max(lastIndex, index);
           const doSelect = lastClickAction === "select";
+
+          // If clicking checkbox, override browser's toggle to match range action
+          if (isCheckboxClick) {
+            e.target.checked = doSelect;
+          }
+
           for (let i = start; i <= end; i++) {
             const item = allItems[i];
             const uid = item.dataset.uid;
@@ -957,30 +964,32 @@ function renderTree() {
         }
       }
 
+      // ── Normal click (no Shift) ──
       const uid = el.dataset.uid;
-      // Track whether this click is select or deselect
-      lastClickAction = selectedIds.has(uid) ? "deselect" : "select";
-      toggleSelection(uid, el);
-      lastClickedItem = el;
-    });
 
-    el.querySelector(".tree-item-checkbox").addEventListener("change", (e) => {
-      const uid = el.dataset.uid;
-      if (e.target.checked) {
-        selectedIds.add(uid);
-        el.classList.add("selected");
-        lastClickAction = "select";
+      if (isCheckboxClick) {
+        // Checkbox was already toggled by browser before click event fires
+        const newChecked = e.target.checked;
+        lastClickAction = newChecked ? "select" : "deselect";
+        if (newChecked) {
+          selectedIds.add(uid);
+          el.classList.add("selected");
+        } else {
+          selectedIds.delete(uid);
+          el.classList.remove("selected");
+        }
+        lastClickedItem = el;
+        updateGroupCheckboxStates();
+        updateSummary();
+        notifySelectionChanged();
+        applyHighlightColors();
+        syncSelectionToViewer();
       } else {
-        selectedIds.delete(uid);
-        el.classList.remove("selected");
-        lastClickAction = "deselect";
+        // Click on row text — toggle selection
+        lastClickAction = selectedIds.has(uid) ? "deselect" : "select";
+        toggleSelection(uid, el);
+        lastClickedItem = el;
       }
-      lastClickedItem = el;
-      updateGroupCheckboxStates();
-      updateSummary();
-      notifySelectionChanged();
-      applyHighlightColors();
-      syncSelectionToViewer();
     });
   });
 }
