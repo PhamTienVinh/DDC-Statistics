@@ -300,11 +300,14 @@ async function fetchAndParseProperties(modelId, objectIds) {
 // Uses ASSEMBLY_POS as unique instance identifier (unique per physical assembly in Tekla)
 function assignAssemblyInstances() {
   for (const obj of allObjects) {
-    // Use assemblyPos as unique instance key (best for Tekla)
     if (obj.assemblyPos) {
+      // Best: ASSEMBLY_POS is unique per physical assembly in Tekla
       obj.assemblyInstanceId = `${obj.modelId}:pos_${obj.assemblyPos}`;
+    } else if (obj.assemblyName) {
+      // Fallback: ASSEMBLY_NAME
+      obj.assemblyInstanceId = `${obj.modelId}:aname_${obj.assemblyName}`;
     } else if (obj.assembly) {
-      // Fallback: use assembly name for non-Tekla objects
+      // Fallback: generic assembly field
       obj.assemblyInstanceId = `${obj.modelId}:name_${obj.assembly}`;
     } else {
       obj.assemblyInstanceId = "";
@@ -312,7 +315,7 @@ function assignAssemblyInstances() {
   }
 
   const uniqueInstances = new Set(allObjects.filter(o => o.assemblyInstanceId).map(o => o.assemblyInstanceId));
-  console.log(`[ObjectExplorer] Assigned ${uniqueInstances.size} assembly instances (by ASSEMBLY_POS)`);
+  console.log(`[ObjectExplorer] Assigned ${uniqueInstances.size} assembly instances`);
 }
 
 // Build human-readable display names for assembly groups
@@ -395,25 +398,30 @@ function parseObjectProperties(props, modelId) {
       // Assembly — capture Tekla-specific properties separately
       const asmVal = String(propValue || "").trim();
       if (asmVal) {
-        // ASSEMBLY_NAME
+        // ASSEMBLY_NAME (broad matching)
         if (
           propName === "assembly_name" || propName === "assemblyname" ||
-          propName === "assembly name"
+          propName === "assembly name" || propName === "assembly.name"
         ) {
           result.assemblyName = asmVal;
         }
-        // ASSEMBLY_POS (unique per assembly instance in Tekla)
+        // ASSEMBLY_POS (broad matching for Tekla)
         if (
           propName === "assembly_pos" || propName === "assemblypos" ||
           propName === "assembly pos" || propName === "assembly position" ||
-          propName === "assembly_position"
+          propName === "assembly_position" || propName === "assemblyposition" ||
+          propName === "assembly.pos" || propName === "assembly.position" ||
+          (propName.includes("assembly") && (propName.includes("pos") || propName.includes("position"))) ||
+          propName === "assembly_prefix" ||
+          propName === "assembly prefix"
         ) {
-          result.assemblyPos = asmVal;
+          if (!result.assemblyPos) result.assemblyPos = asmVal;
         }
-        // ASSEMBLY_POSITION_CODE
+        // ASSEMBLY_POSITION_CODE (broad matching)
         if (
           propName === "assembly_position_code" || propName === "assemblypositioncode" ||
-          propName === "assembly position code"
+          propName === "assembly position code" || propName === "assembly.position_code" ||
+          (propName.includes("assembly") && propName.includes("code"))
         ) {
           result.assemblyPosCode = asmVal;
         }
@@ -588,6 +596,10 @@ function onSearchInput(e) {
         (o) =>
           o.name.toLowerCase().includes(q) ||
           o.assembly.toLowerCase().includes(q) ||
+          o.assemblyPos.toLowerCase().includes(q) ||
+          o.assemblyName.toLowerCase().includes(q) ||
+          o.assemblyPosCode.toLowerCase().includes(q) ||
+          (o.assemblyDisplayName && o.assemblyDisplayName.toLowerCase().includes(q)) ||
           o.group.toLowerCase().includes(q) ||
           o.type.toLowerCase().includes(q) ||
           o.material.toLowerCase().includes(q) ||
@@ -851,8 +863,6 @@ function expandAll() {
 
 function getGroupKey(obj, groupBy) {
   switch (groupBy) {
-    case "assembly":
-      return obj.assemblyDisplayName || obj.assembly;
     case "assemblyName":
       return obj.assemblyName || obj.assembly || "(Không xác định)";
     case "assemblyPos":
@@ -867,8 +877,6 @@ function getGroupKey(obj, groupBy) {
       return obj.type;
     case "material":
       return obj.material;
-    case "source":
-      return obj.isTekla ? "Tekla Structures" : "Khác";
     default:
       return obj.assemblyDisplayName || obj.assembly;
   }
