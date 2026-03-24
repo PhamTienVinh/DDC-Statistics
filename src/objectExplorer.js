@@ -13,11 +13,9 @@ let viewerRef = null;
 let allObjects = []; // { id, modelId, name, assembly, group, type, material, volume, weight, area, length, profile, class }
 let filteredObjects = [];
 let selectedIds = new Set(); // Set of "modelId:objectId"
-let labelsVisible = false;
 let isolateActive = false;
 let highlightActive = false;
 let searchTimeout = null;
-let currentLabelIcons = []; // track added icon IDs for removal
 let lastClickedItem = null; // for Shift+click range selection
 let lastClickAction = "select"; // "select" or "deselect" — for Shift range
 let isSyncingFromViewer = false; // prevent infinite loop with TC selection sync
@@ -636,121 +634,6 @@ async function toggleIsolate() {
   }
 }
 
-// ── Labels (using addIcon API with text, or bounding box overlay) ──
-async function toggleLabels() {
-  const btn = document.getElementById("btn-show-labels");
-
-  if (labelsVisible) {
-    // Remove labels
-    try {
-      if (currentLabelIcons.length > 0) {
-        await viewerRef.removeIcon(currentLabelIcons);
-      } else {
-        await viewerRef.removeIcon();
-      }
-    } catch (e) {
-      console.warn("[ObjectExplorer] removeIcon failed:", e);
-    }
-    currentLabelIcons = [];
-    labelsVisible = false;
-    btn.classList.remove("active");
-    console.log("[ObjectExplorer] Labels removed");
-    return;
-  }
-
-  const objectsToLabel = selectedIds.size > 0
-    ? allObjects.filter((o) => selectedIds.has(`${o.modelId}:${o.id}`))
-    : filteredObjects.slice(0, 100); // Limit labels
-
-  if (objectsToLabel.length === 0) return;
-
-  try {
-    // Get bounding boxes to position labels
-    const labelsByModel = {};
-    for (const obj of objectsToLabel) {
-      if (!labelsByModel[obj.modelId]) labelsByModel[obj.modelId] = [];
-      labelsByModel[obj.modelId].push(obj);
-    }
-
-    const icons = [];
-    let iconIdCounter = 1000;
-
-    for (const [modelId, objs] of Object.entries(labelsByModel)) {
-      const runtimeIds = objs.map((o) => o.id);
-
-      try {
-        // Get bounding boxes for positioning
-        const bboxes = await viewerRef.getObjectBoundingBoxes(modelId, runtimeIds);
-
-        if (bboxes && bboxes.length > 0) {
-          for (let i = 0; i < bboxes.length; i++) {
-            const bbox = bboxes[i];
-            const obj = objs.find((o) => o.id === bbox.id) || objs[i];
-            if (!bbox.boundingBox) continue;
-
-            // Position label at top-center of bounding box
-            const bb = bbox.boundingBox;
-            const pos = {
-              x: (bb.min.x + bb.max.x) / 2,
-              y: (bb.min.y + bb.max.y) / 2,
-              z: bb.max.z + 0.3, // slightly above the object
-            };
-
-            icons.push({
-              id: iconIdCounter++,
-              iconPath: createLabelSvgDataUrl(getObjectLabel(obj)),
-              position: pos,
-              size: 48,
-            });
-          }
-        }
-      } catch (e) {
-        console.warn(`[ObjectExplorer] getBoundingBoxes failed for model ${modelId}:`, e);
-
-        // Fallback: try getObjectPositions
-        try {
-          const positions = await viewerRef.getObjectPositions(modelId, runtimeIds);
-          if (positions) {
-            for (const posData of positions) {
-              const obj = objs.find((o) => o.id === posData.id);
-              if (!obj || !posData.position) continue;
-
-              icons.push({
-                id: iconIdCounter++,
-                iconPath: createLabelSvgDataUrl(getObjectLabel(obj)),
-                position: {
-                  x: posData.position.x,
-                  y: posData.position.y,
-                  z: posData.position.z + 0.5,
-                },
-                size: 48,
-              });
-            }
-          }
-        } catch (e2) {
-          console.warn("[ObjectExplorer] getObjectPositions also failed:", e2);
-        }
-      }
-    }
-
-    if (icons.length > 0) {
-      await viewerRef.addIcon(icons);
-      currentLabelIcons = icons;
-      labelsVisible = true;
-      btn.classList.add("active");
-      console.log(`[ObjectExplorer] Added ${icons.length} label icons`);
-    } else {
-      // Final fallback: just highlight + select to show tooltip
-      await highlightSelected();
-      labelsVisible = true;
-      btn.classList.add("active");
-      console.log("[ObjectExplorer] Labels shown via selection tooltip");
-    }
-  } catch (error) {
-    console.error("[ObjectExplorer] Labels failed:", error);
-  }
-}
-
 // ── Build a descriptive display name for tree items ──
 function getObjectDisplayName(obj) {
   let name = obj.name || "";
@@ -796,29 +679,36 @@ function handleViewerSelectionChanged(data) {
   if (!data || !allObjects || allObjects.length === 0) return;
 
   try {
-    // data can be: { modelObjectIds: [{ modelId, objectRuntimeIds: number[] }] }
-    const modelObjIds = data.modelObjectIds || data || [];
-    if (!Array.isArray(modelObjIds)) return;
+    // data can be various formats depending on TC API version:
+    // { modelObjectIds: [{ modelId, objectRuntimeIds: number[] }] }
+    // or just [{ modelId, objectRuntimeIds: number[] }]
+    let modelObjIds = data.modelObjectIds || data;
+    if (!Array.isArray(modelObjIds)) {
+      if (modelObjIds && typeof modelObjIds === 'object') {
+        modelObjIds = [modelObjIds];
+      } else {
+        return;
+      }
+    }
 
     // Build set of selected uids from viewer
     const viewerSelectedUids = new Set();
     for (const mo of modelObjIds) {
+      if (!mo) continue;
       const modelId = mo.modelId;
-      const ids = mo.objectRuntimeIds || mo.entityIds || [];
+      const ids = mo.objectRuntimeIds || mo.entityIds || mo.ids || [];
       for (const id of ids) {
         viewerSelectedUids.add(`${modelId}:${id}`);
       }
     }
 
-    // If viewer sends empty selection, don't clear panel — just return
-    if (viewerSelectedUids.size === 0) return;
-
-    // Add viewer selections to panel selections
+    // Replace panel selection with viewer selection (real-time sync)
+    selectedIds.clear();
     for (const uid of viewerSelectedUids) {
       selectedIds.add(uid);
     }
 
-    // Update tree UI
+    // Update tree UI checkboxes
     const treeItems = document.querySelectorAll(".tree-item");
     for (const el of treeItems) {
       const uid = el.dataset.uid;
@@ -863,14 +753,13 @@ function createLabelSvgDataUrl(text) {
 async function resetAll() {
   selectedIds.clear();
   isolateActive = false;
-  labelsVisible = false;
   highlightActive = false;
-  currentLabelIcons = [];
   lastClickedItem = null;
 
-  document.getElementById("btn-isolate").classList.remove("active");
-  document.getElementById("btn-show-labels").classList.remove("active");
-  document.getElementById("btn-highlight").classList.remove("active");
+  const btnIsolate = document.getElementById("btn-isolate");
+  const btnHighlight = document.getElementById("btn-highlight");
+  if (btnIsolate) btnIsolate.classList.remove("active");
+  if (btnHighlight) btnHighlight.classList.remove("active");
 
   try {
     // Clear selection
@@ -880,11 +769,6 @@ async function resetAll() {
   try {
     // Reset object states (visibility, color)
     await viewerRef.setObjectState(undefined, { visible: "reset", color: "reset" });
-  } catch (e) { /* ignore */ }
-
-  try {
-    // Remove label icons
-    await viewerRef.removeIcon();
   } catch (e) { /* ignore */ }
 
   updateSummary();
