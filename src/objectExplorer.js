@@ -20,36 +20,6 @@ let lastClickAction = "select"; // "select" or "deselect" — for Shift range
 let isSyncingFromViewer = false; // flag to prevent re-entry during sync
 let lastViewerSelectionKey = ''; // dedup key for polling
 
-// IFC classes that ARE actual 3D geometry objects (whitelist)
-const IFC_3D_CLASSES = new Set([
-  // Structural elements
-  'IfcBeam', 'IfcColumn', 'IfcPlate', 'IfcMember',
-  'IfcWall', 'IfcWallStandardCase', 'IfcCurtainWall',
-  'IfcSlab', 'IfcRoof', 'IfcStair', 'IfcStairFlight',
-  'IfcRamp', 'IfcRampFlight', 'IfcRailing',
-  'IfcFooting', 'IfcPile', 'IfcFoundation',
-  // Building elements
-  'IfcDoor', 'IfcWindow', 'IfcCovering',
-  'IfcBuildingElementProxy', 'IfcBuildingElement',
-  // Steel / Tekla (including assemblies)
-  'IfcElementAssembly',
-  'IfcDiscreteAccessory', 'IfcFastener', 'IfcMechanicalFastener',
-  'IfcReinforcingBar', 'IfcReinforcingMesh', 'IfcTendon', 'IfcTendonAnchor',
-  // MEP
-  'IfcPipeSegment', 'IfcPipeFitting', 'IfcValve',
-  'IfcDuctSegment', 'IfcDuctFitting', 'IfcDuctSilencer',
-  'IfcCableCarrierSegment', 'IfcCableSegment',
-  'IfcFlowTerminal', 'IfcFlowSegment', 'IfcFlowFitting',
-  'IfcFlowController', 'IfcFlowMovingDevice', 'IfcFlowStorageDevice',
-  'IfcFlowTreatmentDevice', 'IfcEnergyConversionDevice',
-  // Equipment & Furniture
-  'IfcFurnishingElement', 'IfcFurniture', 'IfcEquipmentElement',
-  'IfcTransportElement', 'IfcDistributionElement',
-  // Generic proxy / catch-all for real geometry
-  'IfcProxy', 'IfcElementComponent',
-  // Openings (sometimes needed)
-  'IfcOpeningElement',
-]);
 
 // ── Init ──
 export function initObjectExplorer(api, viewer) {
@@ -194,57 +164,23 @@ async function scanObjects() {
 
     console.log(`[ObjectExplorer] Raw scanned ${allObjects.length} objects`);
 
-    // Filter: keep ONLY actual 3D geometry objects
+    // Filter: remove specific non-3D objects (Revit parent nodes)
     const beforeFilter = allObjects.length;
     allObjects = allObjects.filter(obj => {
-      const cls = obj.ifcClass || '';
-      const clsLower = cls.toLowerCase();
-      const nameLower = (obj.name || '').toLowerCase();
-      const typeLower = (obj.type || '').toLowerCase();
+      const cls = (obj.ifcClass || '').toLowerCase();
+      const name = (obj.name || '').toLowerCase();
 
-      // 1) Exclude by IFC class name (case-insensitive) — non-geometry classes
-      const excludedClassKeywords = [
-        'ifcsite', 'ifcproject', 'ifcbuilding', 'ifcbuildingstorey',
-        'ifcspace', 'ifczone', 'ifcgroup', 'ifcsystem',
-        'ifcgrid', 'ifcgridaxis', 'ifcannotation',
-        'ifcrelation', 'ifcrel', 'ifcownerhist', 'ifcapplication',
-        'ifcpropertyset', 'ifcmaterial', 'ifcunit',
-        'ifcgeometric', 'ifccartesian', 'ifcdirection', 'ifcaxis',
-        'ifclocalplacement', 'ifcorganization',
-      ];
-      if (clsLower && excludedClassKeywords.some(k => clsLower.startsWith(k))) return false;
+      // Exclude IfcSite, IfcBuilding, IfcProject
+      if (cls === 'ifcsite' || cls === 'ifcbuilding' || cls === 'ifcproject') return false;
+      if (name === 'ifcsite' || name === 'ifcbuilding' || name === 'ifcproject') return false;
 
-      // 2) Exclude by name — Revit non-3D items that may lack proper IFC class
-      const excludedNameKeywords = [
-        'ifcsite', 'ifcbuilding', 'ifcproject', 'ifcbuildingstorey',
-        'model group', 'modelgroup', 'model line', 'model text',
-        'level ', 'grid ', 'grid:', 'datum', 'reference plane',
-        'scope box', 'section box', 'elevation:', 'section:',
-        'detail line', 'drafting view', 'schedule',
-        'callout', 'matchline', 'guide grid',
-      ];
-      if (nameLower && excludedNameKeywords.some(k => nameLower.startsWith(k))) return false;
-      // Also exclude exact matches
-      if (['assembly', 'model group', 'ifcsite', 'ifcbuilding', 'ifcproject'].includes(nameLower)) return false;
+      // Exclude Model Group, Assembly (Revit non-3D parent nodes)
+      if (name === 'model group' || name === 'modelgroup') return false;
+      if (name === 'assembly') return false;
 
-      // 3) Exclude by type field
-      const excludedTypeKeywords = [
-        'ifcsite', 'ifcbuilding', 'ifcproject', 'ifcbuildingstorey',
-        'ifcspace', 'ifcgroup', 'ifcgrid', 'ifcannotation',
-        'model group', 'modelgroup',
-      ];
-      if (typeLower && excludedTypeKeywords.some(k => typeLower.startsWith(k))) return false;
-
-      // 4) If IFC class exists and is in our 3D whitelist → keep
-      if (cls && IFC_3D_CLASSES.has(cls)) return true;
-
-      // 5) If IFC class exists but not in whitelist → exclude
-      if (cls && !IFC_3D_CLASSES.has(cls)) return false;
-
-      // 6) No IFC class → keep only if it has physical data
-      return (obj.volume > 0 || obj.weight > 0 || obj.area > 0);
+      return true;
     });
-    console.log(`[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} 3D objects`);
+    console.log(`[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects`);
 
     filteredObjects = [...allObjects];
     selectedIds.clear();
