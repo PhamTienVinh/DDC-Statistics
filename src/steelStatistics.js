@@ -33,7 +33,15 @@ export function initSteelStatistics(api, viewer) {
   document.getElementById("btn-export-selected").addEventListener("click", () => exportExcel(true));
 
   // Listen for real-time selection changes
-  window.addEventListener("selection-changed", () => {
+  window.addEventListener("selection-changed", (e) => {
+    const detail = e.detail || {};
+    // Auto-switch to "selected only" when objects are selected from 3D viewer
+    const toggle = document.getElementById("stats-all-toggle");
+    if (detail.count > 0) {
+      toggle.checked = false;
+    } else {
+      toggle.checked = true;
+    }
     updateStatistics();
   });
 }

@@ -682,8 +682,8 @@ function handleViewerSelectionChanged(data) {
       }
     }
 
-    // ADD viewer selection to existing panel selection (persistent memory)
-    // Only add new items from viewer, keep previously selected items
+    // Replace panel selection with viewer selection (sync from 3D view)
+    selectedIds.clear();
     for (const uid of viewerSelectedUids) {
       selectedIds.add(uid);
     }
