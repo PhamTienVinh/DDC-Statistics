@@ -253,8 +253,6 @@ async function scanObjects() {
       "ifcvirtualelement",
       // Distribution systems (MEP abstract)
       "ifcdistributionsystem", "ifcsystem",
-      // Revit-specific non-3D
-      "ifcbuildingelementproxy", // often used for levels/grids in Revit exports
     ]);
     const beforeFilter = allObjects.length;
     allObjects = allObjects.filter((obj) => {
@@ -282,15 +280,13 @@ async function scanObjects() {
     // Build display names for assembly groups
     buildAssemblyDisplayNames();
 
-    // Filter Stage 2: keep only objects with physical data (volume, weight, or area > 0)
-    // This removes non-3D assemblies, grids, levels, and any object without measurable geometry
-    const beforePhysicalFilter = allObjects.length;
-    allObjects = allObjects.filter((obj) => {
-      return obj.volume > 0 || obj.weight > 0 || obj.area > 0;
-    });
-    console.log(
-      `[ObjectExplorer] Stage 2 filter: ${beforePhysicalFilter} → ${allObjects.length} objects (removed ${beforePhysicalFilter - allObjects.length} objects with no physical data)`,
-    );
+    // Log objects without physical data (for debugging, but keep them in the list)
+    const noPhysicalData = allObjects.filter((obj) => obj.volume === 0 && obj.weight === 0 && obj.area === 0);
+    if (noPhysicalData.length > 0) {
+      console.log(
+        `[ObjectExplorer] ${noPhysicalData.length}/${allObjects.length} objects have no physical data (volume/weight/area) — kept in list`,
+      );
+    }
 
     filteredObjects = [...allObjects];
     selectedIds.clear();
