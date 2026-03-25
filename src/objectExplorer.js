@@ -1506,13 +1506,24 @@ function handleViewerSelectionChanged(data) {
       return;
     }
 
-    // Step 5: Apply selection to panel
+    // Step 5: Check if selection actually changed (to avoid scroll on polling echo)
+    const selectionChanged = (
+      matchedUids.size !== selectedIds.size ||
+      [...matchedUids].some(uid => !selectedIds.has(uid))
+    );
+
+    if (!selectionChanged) {
+      // Polling returned the same selection — no need to update or scroll
+      return;
+    }
+
+    // Step 6: Apply selection to panel
     selectedIds.clear();
     for (const uid of matchedUids) {
       selectedIds.add(uid);
     }
 
-    // Step 6: Update tree UI checkboxes
+    // Step 7: Update tree UI checkboxes
     const treeItems = document.querySelectorAll(".tree-item");
     for (const el of treeItems) {
       const uid = el.dataset.uid;
@@ -1522,39 +1533,33 @@ function handleViewerSelectionChanged(data) {
       if (cb) cb.checked = isSelected;
     }
 
-    // Step 7: Update summary + statistics
+    // Step 8: Update summary + statistics
     updateGroupCheckboxStates();
     updateSummary();
     notifySelectionChanged();
     applyHighlightColors();
 
-    // Step 8: Scroll to the first selected item in the panel
-    // Only scroll when selection originates from the 3D viewer (not from panel echo)
-    if (!selectionFromPanel) {
-      setTimeout(() => {
-        const firstSel = document.querySelector(".tree-item.selected");
-        if (!firstSel) {
-          console.log("[ViewerSync] No .tree-item.selected found to scroll to");
-          return;
-        }
+    // Step 9: Scroll to the first selected item in the panel
+    // Only scroll when selection genuinely changed from the 3D viewer (not polling echo)
+    setTimeout(() => {
+      const firstSel = document.querySelector(".tree-item.selected");
+      if (!firstSel) return;
 
-        // Expand the parent group so the item is visible
-        const group = firstSel.closest(".tree-group");
-        if (group && group.classList.contains("collapsed")) {
-          group.classList.remove("collapsed");
-        }
+      // Expand the parent group so the item is visible
+      const group = firstSel.closest(".tree-group");
+      if (group && group.classList.contains("collapsed")) {
+        group.classList.remove("collapsed");
+      }
 
-        // Manual scroll: calculate position relative to tree container
-        const treeContainer = document.getElementById("object-tree");
-        if (treeContainer) {
-          const containerRect = treeContainer.getBoundingClientRect();
-          const itemRect = firstSel.getBoundingClientRect();
-          const scrollOffset = itemRect.top - containerRect.top - (containerRect.height / 2) + treeContainer.scrollTop;
-          treeContainer.scrollTo({ top: Math.max(0, scrollOffset), behavior: "smooth" });
-          console.log(`[ViewerSync] Scrolled to selected item (scrollTop=${Math.max(0, scrollOffset).toFixed(0)})`);
-        }
-      }, 100);
-    }
+      // Manual scroll: calculate position relative to tree container
+      const treeContainer = document.getElementById("object-tree");
+      if (treeContainer) {
+        const containerRect = treeContainer.getBoundingClientRect();
+        const itemRect = firstSel.getBoundingClientRect();
+        const scrollOffset = itemRect.top - containerRect.top - (containerRect.height / 2) + treeContainer.scrollTop;
+        treeContainer.scrollTo({ top: Math.max(0, scrollOffset), behavior: "smooth" });
+      }
+    }, 100);
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
   }
