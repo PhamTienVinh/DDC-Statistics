@@ -1193,38 +1193,10 @@ function getGroupKey(obj, groupBy) {
 }
 
 // ── Highlight ──
-
-// Apply colored highlight overlay to all selected objects (auto-highlight)
+// Selection glow is handled natively by the TC viewer via setSelection.
+// No color overlay is applied — objects just glow when selected.
 async function applyHighlightColors() {
-  try {
-    // Always reset colors first
-    await viewerRef.setObjectState(undefined, { color: "reset" });
-  } catch (e) {
-    /* ignore */
-  }
-
-  if (selectedIds.size === 0) return;
-
-  const modelMap = buildModelMap();
-
-  try {
-    // Apply color overlay (bright blue highlight) to selected objects
-    await viewerRef.setObjectState(
-      {
-        modelObjectIds: Object.entries(modelMap).map(([modelId, ids]) => ({
-          modelId,
-          objectRuntimeIds: ids,
-        })),
-      },
-      { color: { r: 255, g: 220, b: 0, a: 220 } },
-    );
-
-    console.log(
-      `[ObjectExplorer] Auto-highlighted ${selectedIds.size} objects`,
-    );
-  } catch (e) {
-    console.error("[ObjectExplorer] Highlight color failed:", e);
-  }
+  // No-op: rely on viewer's native selection highlight (glow)
 }
 
 // Sync panel selection to TC viewer (one-way: panel → viewer)
@@ -1442,7 +1414,7 @@ function handleViewerSelectionChanged(data) {
       selectedIds.add(uid);
     }
 
-    // Step 6: Update tree UI checkboxes + auto-expand collapsed groups
+    // Step 6: Update tree UI checkboxes
     const treeItems = document.querySelectorAll(".tree-item");
     for (const el of treeItems) {
       const uid = el.dataset.uid;
@@ -1450,14 +1422,6 @@ function handleViewerSelectionChanged(data) {
       el.classList.toggle("selected", isSelected);
       const cb = el.querySelector(".tree-item-checkbox");
       if (cb) cb.checked = isSelected;
-
-      // Auto-expand collapsed parent group
-      if (isSelected) {
-        const group = el.closest(".tree-group");
-        if (group && group.classList.contains("collapsed")) {
-          group.classList.remove("collapsed");
-        }
-      }
     }
 
     // Step 7: Scroll first selected item into view (only if selection came from 3D viewer click)
