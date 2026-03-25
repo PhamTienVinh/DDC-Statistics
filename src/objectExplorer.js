@@ -1574,7 +1574,20 @@ function handleViewerSelectionChanged(data) {
     notifySelectionChanged();
     applyHighlightColors();
 
-    // No auto-scroll or auto-expand — user controls the panel view manually.
+    // Auto-scroll to the first selected item in the tree
+    if (matchedUids.size > 0) {
+      const firstUid = matchedUids.values().next().value;
+      const firstEl = document.querySelector(`.tree-item[data-uid="${CSS.escape(firstUid)}"]`);
+      if (firstEl) {
+        // Auto-expand the parent group if it's collapsed
+        const parentGroup = firstEl.closest(".tree-group");
+        if (parentGroup && parentGroup.classList.contains("collapsed")) {
+          parentGroup.classList.remove("collapsed");
+        }
+        // Smooth scroll to the selected item
+        firstEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
   }
