@@ -1424,22 +1424,23 @@ function handleViewerSelectionChanged(data) {
       if (cb) cb.checked = isSelected;
     }
 
-    // Step 7: Scroll first selected item into view (only if selection came from 3D viewer click)
-    if (!selectionFromPanel) {
-      const firstSel = document.querySelector(".tree-item.selected");
-      if (firstSel) {
-        firstSel.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }
-    }
-
-    // Step 8: Update summary + statistics
-    const treeContainer = document.getElementById("object-tree");
-    const savedScroll = treeContainer.scrollTop;
+    // Step 7: Update summary + statistics
     updateSummary();
     notifySelectionChanged();
     applyHighlightColors();
-    // Restore scroll position to prevent any layout shift
-    treeContainer.scrollTop = savedScroll;
+
+    // Step 8: Expand the group of the first selected item and scroll to it
+    if (!selectionFromPanel) {
+      const firstSel = document.querySelector(".tree-item.selected");
+      if (firstSel) {
+        // Expand the parent group so the item is visible
+        const group = firstSel.closest(".tree-group");
+        if (group && group.classList.contains("collapsed")) {
+          group.classList.remove("collapsed");
+        }
+        firstSel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
   }
