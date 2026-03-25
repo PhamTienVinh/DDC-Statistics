@@ -1041,14 +1041,13 @@ function toggleSelection(uid, el) {
   syncSelectionToViewer();
 }
 
-// ── Select Assembly — dual-strategy: IFC hierarchy walk-up + Tekla ASSEMBLY_POS fallback ──
-// Mimics Trimble Connect Desktop: walk UP the IFC hierarchy to find parent IfcElementAssembly,
-// then select ALL children of that assembly.
+// ── Select Assembly — find ASSEMBLY_POS of selected object, select all matching ──
+// Flow: select 1 object → click Select Assembly → find its assemblyPos → select all objects with same assemblyPos
 async function selectAssembly() {
   if (!viewerRef) return;
 
   try {
-    // Step 1: Get current selection DIRECTLY from the viewer
+    // Step 1: Get current selection from the viewer
     const viewerSel = await viewerRef.getSelection();
     console.log("[SelectAssembly] Viewer selection:", JSON.stringify(viewerSel).substring(0, 500));
 
@@ -1074,7 +1073,7 @@ async function selectAssembly() {
       }
     }
 
-    // Fallback: parse from panel selectedIds if viewer selection is empty
+    // Fallback: use panel selectedIds if viewer selection is empty
     if (selObjectIds.length === 0 && selectedIds.size > 0) {
       const firstUid = selectedIds.values().next().value;
       const idx = firstUid.indexOf(":");
@@ -1091,145 +1090,88 @@ async function selectAssembly() {
 
     const objectId = selObjectIds[0];
     const objectKey = `${selModelId}:${objectId}`;
-    console.log(`[SelectAssembly] Using modelId=${selModelId}, objectId=${objectId}`);
+    console.log(`[SelectAssembly] Selected objectKey=${objectKey}`);
 
-    // ════════════════════════════════════════════════════════════════
-    // Strategy 1: IFC Hierarchy — find parent IfcElementAssembly
-    // (matches Trimble Connect Desktop behavior)
-    // ════════════════════════════════════════════════════════════════
-    let assemblyFound = false;
+    // Step 2: Find this object in allObjects and get its assemblyPos
+    let assemblyPosValue = "";
+    const selectedObj = allObjects.find(o => `${o.modelId}:${o.id}` === objectKey);
 
-    // Check if this object is mapped to an assembly in the pre-built hierarchy
-    const assemblyKey = assemblyMembershipMap.get(objectKey);
-    if (assemblyKey) {
-      const childIds = assemblyChildrenMap.get(assemblyKey);
-      if (childIds && childIds.size > 0) {
-        console.log(`[SelectAssembly] Strategy 1 (IFC Hierarchy): Found assembly "${assemblyKey}" with ${childIds.size} children`);
-
-        // Select all children that exist in allObjects
-        selectedIds.clear();
-        let count = 0;
-        const knownObjectIds = new Set(allObjects.map(o => `${o.modelId}:${o.id}`));
-
-        for (const childId of childIds) {
-          const childKey = `${selModelId}:${childId}`;
-          if (knownObjectIds.has(childKey)) {
-            selectedIds.add(childKey);
-            count++;
-          }
-        }
-
-        // Also include the assembly node itself if it's in allObjects
-        if (knownObjectIds.has(assemblyKey)) {
-          selectedIds.add(assemblyKey);
-          count++;
-        }
-
-        console.log(`[SelectAssembly] Strategy 1: Selected ${count} objects from assembly hierarchy`);
-        assemblyFound = count > 0;
-      }
+    if (selectedObj && selectedObj.assemblyPos) {
+      assemblyPosValue = selectedObj.assemblyPos;
+      console.log(`[SelectAssembly] Found in allObjects: name="${selectedObj.name}", assemblyPos="${assemblyPosValue}"`);
     }
 
-    // If hierarchy didn't find it, try walking up the tree dynamically
-    if (!assemblyFound) {
-      console.log("[SelectAssembly] Strategy 1: Not in pre-built map, attempting dynamic hierarchy walk-up...");
+    // Fallback: if object not in allObjects (or no assemblyPos), fetch from viewer API
+    if (!assemblyPosValue) {
+      console.log("[SelectAssembly] Object not in allObjects or has no assemblyPos, fetching from viewer API...");
       try {
-        const dynamicResult = await walkUpToAssembly(selModelId, objectId);
-        if (dynamicResult && dynamicResult.childIds.length > 0) {
-          selectedIds.clear();
-          let count = 0;
-          const knownObjectIds = new Set(allObjects.map(o => `${o.modelId}:${o.id}`));
+        const propsArray = await viewerRef.getObjectProperties(selModelId, [objectId]);
+        if (propsArray && propsArray.length > 0) {
+          const props = propsArray[0];
+          for (const pSet of (props.properties || [])) {
+            for (const prop of (pSet.properties || [])) {
+              const rawName = prop.name || "";
+              const norm = rawName.toLowerCase().replace(/[\s_.\-]/g, "");
+              const isAssemblyPos = (
+                norm === "assemblypos" ||
+                rawName === "ASSEMBLY_POS" ||
+                rawName === "ASSEMBLY.ASSEMBLY_POS" ||
+                rawName === "Assembly_Pos" ||
+                rawName === "AssemblyPos" ||
+                rawName === "ASSEMBLY_POSITION" ||
+                rawName === "Assembly Position" ||
+                rawName === "AssemblyMark" ||
+                rawName === "ASSEMBLY_MARK" ||
+                rawName === "Assembly Mark" ||
+                rawName === "Assembly_Mark"
+              );
+              const isExcluded = norm.includes("code") || norm.includes("prefix");
 
-          for (const childId of dynamicResult.childIds) {
-            const childKey = `${selModelId}:${childId}`;
-            if (knownObjectIds.has(childKey)) {
-              selectedIds.add(childKey);
-              count++;
+              if (isAssemblyPos && !isExcluded) {
+                assemblyPosValue = String(prop.value || "").trim();
+                console.log(`[SelectAssembly] From API: ASSEMBLY_POS="${assemblyPosValue}" (from "${rawName}")`);
+                break;
+              }
+            }
+            if (assemblyPosValue) break;
+          }
+
+          if (!assemblyPosValue) {
+            console.log("[SelectAssembly] ASSEMBLY_POS not found. All properties:");
+            for (const pSet of (props.properties || [])) {
+              for (const prop of (pSet.properties || [])) {
+                console.log(`  [${pSet.name}] ${prop.name} = ${prop.value}`);
+              }
             }
           }
-
-          console.log(`[SelectAssembly] Strategy 1 (dynamic): Selected ${count} objects from assembly "${dynamicResult.assemblyName}"`);
-          assemblyFound = count > 0;
         }
       } catch (e) {
-        console.warn("[SelectAssembly] Dynamic hierarchy walk-up failed:", e);
+        console.warn("[SelectAssembly] getObjectProperties failed:", e);
       }
     }
 
-    // ════════════════════════════════════════════════════════════════
-    // Strategy 2 (Fallback): Tekla ASSEMBLY_POS property matching
-    // ════════════════════════════════════════════════════════════════
-    if (!assemblyFound) {
-      console.log("[SelectAssembly] Strategy 2 (Tekla ASSEMBLY_POS fallback)...");
-
-      // Get properties of the selected object
-      const propsArray = await viewerRef.getObjectProperties(selModelId, [objectId]);
-      if (!propsArray || propsArray.length === 0) {
-        console.log("[SelectAssembly] No properties for object", objectId);
-        return;
-      }
-
-      const props = propsArray[0];
-
-      // Find ASSEMBLY_POS in all property sets
-      let assemblyPosValue = "";
-      for (const pSet of (props.properties || [])) {
-        for (const prop of (pSet.properties || [])) {
-          const rawName = prop.name || "";
-          const norm = rawName.toLowerCase().replace(/[\s_.\-]/g, "");
-
-          const isAssemblyPos = (
-            norm === "assemblypos" ||
-            rawName === "ASSEMBLY_POS" ||
-            rawName === "ASSEMBLY.ASSEMBLY_POS" ||
-            rawName === "Assembly_Pos" ||
-            rawName === "AssemblyPos" ||
-            rawName === "ASSEMBLY_POSITION" ||
-            rawName === "AssemblyMark" ||
-            rawName === "ASSEMBLY_MARK"
-          );
-          const isExcluded = norm.includes("code") || norm.includes("prefix");
-
-          if (isAssemblyPos && !isExcluded) {
-            assemblyPosValue = String(prop.value || "").trim();
-            console.log(`[SelectAssembly] Strategy 2: ASSEMBLY_POS="${assemblyPosValue}" (from "${rawName}")`);
-            break;
-          }
-        }
-        if (assemblyPosValue) break;
-      }
-
-      if (!assemblyPosValue) {
-        console.log("[SelectAssembly] No assembly found for this object (neither IFC hierarchy nor Tekla properties)");
-        // Log all properties for debugging
-        for (const pSet of (props.properties || [])) {
-          for (const prop of (pSet.properties || [])) {
-            console.log(`  [${pSet.name}] ${prop.name} = ${prop.value}`);
-          }
-        }
-        return;
-      }
-
-      // Select all objects with matching assemblyPos
-      selectedIds.clear();
-      let count = 0;
-      for (const obj of allObjects) {
-        if (obj.assemblyPos === assemblyPosValue) {
-          selectedIds.add(`${obj.modelId}:${obj.id}`);
-          count++;
-        }
-      }
-      console.log(`[SelectAssembly] Strategy 2: Matched ${count} objects with ASSEMBLY_POS="${assemblyPosValue}"`);
-
-      if (count === 0) {
-        console.log("[SelectAssembly] No matching objects found");
-        return;
-      }
+    if (!assemblyPosValue) {
+      console.log("[SelectAssembly] No ASSEMBLY_POS found for this object — cannot select assembly");
+      return;
     }
 
-    // ════════════════════════════════════════════════════════════════
-    // Update UI and viewer for the selected assembly
-    // ════════════════════════════════════════════════════════════════
+    // Step 3: Select ALL objects with the same assemblyPos
+    selectedIds.clear();
+    let count = 0;
+    for (const obj of allObjects) {
+      if (obj.assemblyPos === assemblyPosValue) {
+        selectedIds.add(`${obj.modelId}:${obj.id}`);
+        count++;
+      }
+    }
+    console.log(`[SelectAssembly] Selected ${count} objects with ASSEMBLY_POS="${assemblyPosValue}"`);
+
+    if (count === 0) {
+      console.log("[SelectAssembly] No matching objects found");
+      return;
+    }
+
+    // Step 4: Update UI
     document.querySelectorAll(".tree-item").forEach((el) => {
       const uid = el.dataset.uid;
       const isSelected = selectedIds.has(uid);
@@ -1237,7 +1179,7 @@ async function selectAssembly() {
       const cb = el.querySelector(".tree-item-checkbox");
       if (cb) cb.checked = isSelected;
 
-      // Auto-expand collapsed parent group for selected items
+      // Auto-expand collapsed parent group
       if (isSelected) {
         const group = el.closest(".tree-group");
         if (group && group.classList.contains("collapsed")) {
@@ -1262,65 +1204,6 @@ async function selectAssembly() {
   }
 }
 
-// ── Dynamic hierarchy walk-up: find parent IfcElementAssembly by walking the model tree ──
-async function walkUpToAssembly(modelId, objectId, maxDepth = 20) {
-  let currentId = objectId;
-
-  for (let depth = 0; depth < maxDepth; depth++) {
-    try {
-      // getHierarchyChildren with a child ID and recursive=false returns the parent
-      const parentNodes = await viewerRef.getHierarchyChildren(modelId, [currentId], 0, false);
-
-      if (!parentNodes || parentNodes.length === 0) {
-        console.log(`[WalkUp] Reached top of hierarchy at depth ${depth}`);
-        break;
-      }
-
-      const parent = parentNodes[0];
-      const parentClass = (parent.class || "").toLowerCase();
-      console.log(`[WalkUp] depth=${depth}: parent id=${parent.id}, class="${parent.class}", name="${parent.name}"`);
-
-      // Check if this parent is an IfcElementAssembly
-      if (parentClass === "ifcelementassembly" || parentClass.includes("elementassembly")) {
-        console.log(`[WalkUp] Found IfcElementAssembly: id=${parent.id}, name="${parent.name}"`);
-
-        // Get all children of this assembly
-        const children = await viewerRef.getHierarchyChildren(modelId, [parent.id], 10, true);
-        const childIds = [];
-
-        function collectIds(nodes) {
-          if (!nodes) return;
-          for (const node of nodes) {
-            childIds.push(node.id);
-            if (node.children && node.children.length > 0) {
-              collectIds(node.children);
-            }
-          }
-        }
-        collectIds(children);
-
-        return {
-          assemblyId: parent.id,
-          assemblyName: parent.name || `Assembly_${parent.id}`,
-          childIds: childIds,
-        };
-      }
-
-      // Move up to the parent for next iteration
-      if (parent.id === currentId) {
-        // Prevent infinite loop if parent returns self
-        console.log("[WalkUp] Parent returned self, stopping");
-        break;
-      }
-      currentId = parent.id;
-    } catch (e) {
-      console.warn(`[WalkUp] Error at depth ${depth}:`, e);
-      break;
-    }
-  }
-
-  return null; // No assembly found
-}
 
 function updateTreeAndNotify() {
   document.querySelectorAll(".tree-item").forEach((el) => {
