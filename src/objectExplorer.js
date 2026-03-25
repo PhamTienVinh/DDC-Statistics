@@ -235,13 +235,20 @@ async function scanObjects() {
       console.log(`[ObjectExplorer] Deduplicated: ${beforeDedup} → ${allObjects.length} objects (removed ${beforeDedup - allObjects.length} duplicates)`);
     }
 
-    // Filter: exclude objects with no physical data (volume, weight, area all = 0)
+    // Filter: exclude IFC metadata objects that are never 3D geometry
+    const NON_3D_CLASSES = new Set([
+      "ifcproject", "ifcsite", "ifcbuilding", "ifcbuildingstorey",
+      "ifcspace", "ifcgroup", "ifcopeningelement", "ifcownerhistory",
+      "ifcreldefinesbyproperties", "ifcrelassociatesmaterial",
+      "ifcrelcontainedinspatialstructure", "ifcrelaggregates",
+    ]);
     const beforeFilter = allObjects.length;
-    allObjects = allObjects.filter(
-      (obj) => obj.volume > 0 || obj.weight > 0 || obj.area > 0,
-    );
+    allObjects = allObjects.filter((obj) => {
+      const cls = (obj.ifcClass || "").toLowerCase();
+      return !NON_3D_CLASSES.has(cls);
+    });
     console.log(
-      `[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects (removed ${beforeFilter - allObjects.length} non-3D)`,
+      `[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects (removed ${beforeFilter - allObjects.length} non-3D metadata)`,
     );
 
     // Assign assembly instances via Tekla properties (ASSEMBLY_POS)
@@ -438,33 +445,10 @@ async function buildAssemblyHierarchyMap(models) {
 }
 
 // ── Enrich objects with assembly info from IFC hierarchy ──
-// Mimics Trimble Connect for Windows behavior:
-// Strategy 1: Parts under IfcElementAssembly → use assembly node's properties/name
-// Strategy 2: Fallback → use direct parent node's properties/name as assembly grouping
+// Uses cached hierarchy info — no extra API calls.
+// Strategy 1: IfcElementAssembly nodes → use node name as ASSEMBLY_POS
+// Strategy 2: Parent node from hierarchy → use parent name as fallback
 async function enrichAssemblyFromHierarchy() {
-  // Step 1: Fetch properties of each IfcElementAssembly node
-  const assemblyNodeProps = new Map(); // assemblyKey -> { assemblyPos, assemblyName }
-  for (const [assemblyKey, nodeInfo] of assemblyNodeInfoMap) {
-    try {
-      const propsArray = await viewerRef.getObjectProperties(nodeInfo.modelId, [nodeInfo.id]);
-      if (propsArray && propsArray.length > 0) {
-        const parsed = parseObjectProperties(propsArray[0], nodeInfo.modelId);
-        assemblyNodeProps.set(assemblyKey, {
-          assemblyPos: parsed.assemblyPos || parsed.assemblyName || nodeInfo.name || "",
-          assemblyName: parsed.assemblyName || parsed.assembly || nodeInfo.name || "",
-          assemblyPosCode: parsed.assemblyPosCode || "",
-        });
-      }
-    } catch (e) {
-      assemblyNodeProps.set(assemblyKey, {
-        assemblyPos: nodeInfo.name || "",
-        assemblyName: nodeInfo.name || "",
-        assemblyPosCode: "",
-      });
-    }
-  }
-
-  // Step 2: Enrich objects from IfcElementAssembly hierarchy
   let enrichedFromAssembly = 0;
   let enrichedFromParent = 0;
 
@@ -476,49 +460,37 @@ async function enrichAssemblyFromHierarchy() {
     // Strategy 1: Check IfcElementAssembly membership
     const assemblyKey = assemblyMembershipMap.get(objectKey);
     if (assemblyKey) {
-      const asmProps = assemblyNodeProps.get(assemblyKey);
-      if (asmProps) {
-        if (!obj.assemblyPos && asmProps.assemblyPos) obj.assemblyPos = asmProps.assemblyPos;
-        if (!obj.assemblyName && asmProps.assemblyName) obj.assemblyName = asmProps.assemblyName;
-        if (!obj.assemblyPosCode && asmProps.assemblyPosCode) obj.assemblyPosCode = asmProps.assemblyPosCode;
-        if (!obj.assembly) obj.assembly = asmProps.assemblyName || asmProps.assemblyPos || "";
+      const nodeInfo = assemblyNodeInfoMap.get(assemblyKey);
+      if (nodeInfo && nodeInfo.name) {
+        obj.assemblyPos = nodeInfo.name;
+        if (!obj.assemblyName) obj.assemblyName = nodeInfo.name;
+        if (!obj.assembly) obj.assembly = nodeInfo.name;
         obj.isTekla = true;
         enrichedFromAssembly++;
         continue;
       }
     }
 
-    // Strategy 2: Use direct parent node from hierarchy as assembly grouping
+    // Strategy 2: Use direct parent node name from hierarchy
     const parentInfo = hierarchyParentMap.get(objectKey);
     if (parentInfo && parentInfo.name) {
-      // Try to fetch parent's properties for ASSEMBLY_POS
-      const parentKey = `${parentInfo.modelId}:${parentInfo.id}`;
-      if (!assemblyNodeProps.has(parentKey)) {
-        try {
-          const parentPropsArray = await viewerRef.getObjectProperties(parentInfo.modelId, [parentInfo.id]);
-          if (parentPropsArray && parentPropsArray.length > 0) {
-            const parsed = parseObjectProperties(parentPropsArray[0], parentInfo.modelId);
-            assemblyNodeProps.set(parentKey, {
-              assemblyPos: parsed.assemblyPos || parsed.assemblyName || parentInfo.name || "",
-              assemblyName: parsed.assemblyName || parsed.assembly || parentInfo.name || "",
-              assemblyPosCode: parsed.assemblyPosCode || "",
-            });
-          }
-        } catch (e) {
-          assemblyNodeProps.set(parentKey, {
-            assemblyPos: parentInfo.name || "",
-            assemblyName: parentInfo.name || "",
-            assemblyPosCode: "",
-          });
-        }
-      }
-
-      const parentProps = assemblyNodeProps.get(parentKey);
-      if (parentProps) {
-        if (!obj.assemblyPos && parentProps.assemblyPos) obj.assemblyPos = parentProps.assemblyPos;
-        if (!obj.assemblyName && parentProps.assemblyName) obj.assemblyName = parentProps.assemblyName;
-        if (!obj.assemblyPosCode && parentProps.assemblyPosCode) obj.assemblyPosCode = parentProps.assemblyPosCode;
-        if (!obj.assembly) obj.assembly = parentProps.assemblyName || parentProps.assemblyPos || "";
+      // Only use parent as assembly if parent class suggests it's a grouping node
+      const parentClass = (parentInfo.class || "").toLowerCase();
+      const isGroupingParent = (
+        parentClass.includes("assembly") ||
+        parentClass.includes("ifcbeam") ||
+        parentClass.includes("ifccolumn") ||
+        parentClass.includes("ifcplate") ||
+        parentClass.includes("ifcmember") ||
+        parentClass.includes("ifcslab") ||
+        parentClass.includes("ifcwall") ||
+        parentClass.includes("ifcbuildingelementproxy") ||
+        parentClass === ""
+      );
+      if (!isGroupingParent) {
+        obj.assemblyPos = parentInfo.name;
+        if (!obj.assemblyName) obj.assemblyName = parentInfo.name;
+        if (!obj.assembly) obj.assembly = parentInfo.name;
         enrichedFromParent++;
       }
     }
@@ -1573,30 +1545,32 @@ function handleViewerSelectionChanged(data) {
     applyHighlightColors();
 
     // Step 8: Scroll to the first selected item in the panel
-    // Use setTimeout to ensure DOM is fully updated before scrolling
-    setTimeout(() => {
-      const firstSel = document.querySelector(".tree-item.selected");
-      if (!firstSel) {
-        console.log("[ViewerSync] No .tree-item.selected found to scroll to");
-        return;
-      }
+    // Only scroll when selection originates from the 3D viewer (not from panel echo)
+    if (!selectionFromPanel) {
+      setTimeout(() => {
+        const firstSel = document.querySelector(".tree-item.selected");
+        if (!firstSel) {
+          console.log("[ViewerSync] No .tree-item.selected found to scroll to");
+          return;
+        }
 
-      // Expand the parent group so the item is visible
-      const group = firstSel.closest(".tree-group");
-      if (group && group.classList.contains("collapsed")) {
-        group.classList.remove("collapsed");
-      }
+        // Expand the parent group so the item is visible
+        const group = firstSel.closest(".tree-group");
+        if (group && group.classList.contains("collapsed")) {
+          group.classList.remove("collapsed");
+        }
 
-      // Manual scroll: calculate position relative to tree container
-      const treeContainer = document.getElementById("object-tree");
-      if (treeContainer) {
-        const containerRect = treeContainer.getBoundingClientRect();
-        const itemRect = firstSel.getBoundingClientRect();
-        const scrollOffset = itemRect.top - containerRect.top - (containerRect.height / 2) + treeContainer.scrollTop;
-        treeContainer.scrollTo({ top: Math.max(0, scrollOffset), behavior: "smooth" });
-        console.log(`[ViewerSync] Scrolled to selected item (scrollTop=${Math.max(0, scrollOffset).toFixed(0)})`);
-      }
-    }, 100);
+        // Manual scroll: calculate position relative to tree container
+        const treeContainer = document.getElementById("object-tree");
+        if (treeContainer) {
+          const containerRect = treeContainer.getBoundingClientRect();
+          const itemRect = firstSel.getBoundingClientRect();
+          const scrollOffset = itemRect.top - containerRect.top - (containerRect.height / 2) + treeContainer.scrollTop;
+          treeContainer.scrollTo({ top: Math.max(0, scrollOffset), behavior: "smooth" });
+          console.log(`[ViewerSync] Scrolled to selected item (scrollTop=${Math.max(0, scrollOffset).toFixed(0)})`);
+        }
+      }, 100);
+    }
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
   }
